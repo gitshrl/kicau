@@ -10,32 +10,16 @@ offline.
 </p>
 
 <p align="center">
-  <em>to make the cat dance, type <code>kicau mania</code> in your terminal</em>
+  <em>dancing with the cat by typing <code>kicau mania</code> in your terminal</em>
 </p>
 
 ## Install
 
-Download the binary. No Rust, no build, no dependencies.
-
 ```sh
-# Linux x86_64 (static, runs on any distro)
-curl -sL https://github.com/gitshrl/kicau/releases/latest/download/kicau-linux-x86_64.tar.gz | tar xz
-
-# macOS, Apple silicon
-curl -sL https://github.com/gitshrl/kicau/releases/latest/download/kicau-macos-arm64.tar.gz | tar xz
-
-sudo mv kicau /usr/local/bin/
-kicau mania
+curl -fsSL https://raw.githubusercontent.com/gitshrl/kicau/main/install.sh | sh
 ```
 
-With Rust already installed:
-
-```sh
-cargo install --git https://github.com/gitshrl/kicau.git --locked
-
-# or from a checkout:
-cargo build --release
-```
+Linux x86_64 and macOS on Apple silicon. No Rust, no build, no dependencies.
 
 ## Authentication
 
