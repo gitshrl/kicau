@@ -94,7 +94,7 @@ Run `kicau <command> --help` for options. Every write supports `--dry-run`.
 
 | Path | Purpose |
 |---|---|
-| `~/.kicau/config.toml` | credentials + optional query-id overrides |
+| `~/.kicau/config.toml` | credentials and GraphQL query ids |
 | `~/.kicau/cookies.env` | session cookies (fallback) |
 | `~/.kicau/kicau.sqlite` | local archive |
 | `~/.kicau/query-ids-cache.json` | auto-refreshed query-id cache |

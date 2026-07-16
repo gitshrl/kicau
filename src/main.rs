@@ -701,20 +701,18 @@ fn head(token: &str) -> String {
     token.chars().take(10).collect()
 }
 
-const CONFIG_TEMPLATE: &str = "\
-# kicau config
+/// A fresh `config.toml`: empty credentials plus the full query-id table (edit an
+/// id if X rotates it and a call starts 404ing).
+fn config_template() -> String {
+    let mut s = String::from("# kicau config\n\n[credentials]\nauth_token = \"\"\nct0 = \"\"\n\n[query_ids]\n");
+    for (op, id) in config::QUERY_IDS {
+        s.push_str(&format!("{op} = \"{id}\"\n"));
+    }
+    s
+}
 
-[credentials]
-auth_token = \"\"
-ct0 = \"\"
-
-# Optional: pin GraphQL query ids X has rotated, e.g.
-# [query_ids]
-# CreateBookmark = \"...\"
-";
-
-/// Create `~/.kicau` and drop a `config.toml` template. Idempotent — never
-/// overwrites an existing config.
+/// Create `~/.kicau` and drop a `config.toml`. Idempotent — never overwrites an
+/// existing config.
 fn init_command() -> Result<()> {
     let state = config::state_dir();
     std::fs::create_dir_all(&state)?;
@@ -722,7 +720,7 @@ fn init_command() -> Result<()> {
     let config_file = config::config_toml_path();
     let fresh = !config_file.exists();
     if fresh {
-        std::fs::write(&config_file, CONFIG_TEMPLATE)?;
+        std::fs::write(&config_file, config_template())?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
