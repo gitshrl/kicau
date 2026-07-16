@@ -8,6 +8,10 @@ offline.
 Written in Rust: static binary, quick startup, low memory, no Node/Python
 runtime.
 
+<p align="center">
+  <img src="docs/mania.gif" alt="a cat dancing in ASCII">
+</p>
+
 ## Install
 
 ```sh
@@ -58,6 +62,7 @@ kicau tweet "with a picture" --media photo.png --alt "a description"
 kicau reply <id-or-url> "nice thread"
 kicau like <id> ; kicau retweet <id> ; kicau bookmark <id>
 kicau find "loops"                        # offline, over your local archive
+kicau mania                               # show a cat dancing in ASCII
 ```
 
 ### Commands
@@ -105,11 +110,3 @@ Run `kicau <command> --help` for options. Every write supports `--dry-run`.
 |---|---|
 | `~/.kicau/config.toml` | all config: credentials and GraphQL query ids |
 | `~/.kicau/kicau.sqlite` | local archive |
-
-## kicau mania
-
-```sh
-kicau mania
-```
-
-![a cat dancing in ASCII](docs/mania.gif)
