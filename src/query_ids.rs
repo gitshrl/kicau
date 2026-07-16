@@ -6,11 +6,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-const BAKED: &str = include_str!("../data/query-ids.json");
+/// Compiled-in defaults — the seed for the user config file and the offline
+/// fallback if that file is missing.
+const DEFAULTS: &str = include_str!("../config/query-ids.json");
 
-/// Baked ids parsed once at first use, not on every lookup.
-static BAKED_IDS: LazyLock<HashMap<String, String>> =
-    LazyLock::new(|| serde_json::from_str(BAKED).unwrap_or_default());
+/// Defaults parsed once at first use, not on every lookup.
+static DEFAULT_IDS: LazyLock<HashMap<String, String>> =
+    LazyLock::new(|| serde_json::from_str(DEFAULTS).unwrap_or_default());
 const TTL_SECS: u64 = 24 * 60 * 60;
 const UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36";
 const DISCOVERY_PAGES: &[&str] = &[
@@ -21,20 +23,20 @@ const DISCOVERY_PAGES: &[&str] = &[
 ];
 const BUNDLE_RE: &str = r"https://abs\.twimg\.com/responsive-web/client-web(?:-legacy)?/[A-Za-z0-9._-]+\.js";
 
-/// Baked query id for an operation — the immediate value used before any runtime
-/// refresh, and the floor the client falls back to.
+/// Compiled-in default id for an operation — the offline fallback.
 pub fn baked(operation: &str) -> Option<String> {
-    BAKED_IDS.get(operation).cloned()
+    DEFAULT_IDS.get(operation).cloned()
 }
 
-/// Ordered, deduped ids to try for an operation: a user pin first (from
-/// `~/.config/kicau/query-ids.json`, hand-edited and never auto-managed), then
-/// the curated baked id, then a still-fresh scraped cache entry. X sometimes
-/// 404s a freshly-shipped bundle id it hasn't rolled out server-side, so trying
-/// the older curated id before the scraped one is deliberate.
+/// Ordered, deduped ids to try for an operation: the config file
+/// (`~/.config/kicau/query-ids.json`, seeded from the compiled defaults and yours
+/// to edit) first, then the compiled fallback, then a still-fresh scraped cache
+/// entry. X sometimes 404s a freshly-shipped bundle id it hasn't rolled out
+/// server-side, so trying the curated id before the scraped one is deliberate.
 pub fn candidates(operation: &str) -> Vec<String> {
+    seed_config();
     let mut out = Vec::new();
-    for id in [user_override(operation), baked(operation), fresh_cache(operation)].into_iter().flatten() {
+    for id in [config_id(operation), baked(operation), fresh_cache(operation)].into_iter().flatten() {
         if !id.is_empty() && !out.contains(&id) {
             out.push(id);
         }
@@ -42,9 +44,26 @@ pub fn candidates(operation: &str) -> Vec<String> {
     out
 }
 
-fn user_override(operation: &str) -> Option<String> {
+fn config_path() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_default();
-    let raw = std::fs::read_to_string(PathBuf::from(home).join(".config/kicau/query-ids.json")).ok()?;
+    PathBuf::from(home).join(".config/kicau/query-ids.json")
+}
+
+/// Write the compiled defaults to the config file on first run so the ids are
+/// visible and editable. Never overwrites an existing file.
+fn seed_config() {
+    let path = config_path();
+    if path.exists() {
+        return;
+    }
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(path, DEFAULTS);
+}
+
+fn config_id(operation: &str) -> Option<String> {
+    let raw = std::fs::read_to_string(config_path()).ok()?;
     serde_json::from_str::<HashMap<String, String>>(&raw).ok()?.get(operation).cloned()
 }
 
@@ -110,9 +129,10 @@ fn write_cache(snapshot: &Snapshot) {
 }
 
 /// Single best id for an operation, used right after a forced scrape (so a fresh
-/// cache entry outranks baked): a user pin, then a fresh cache entry, then baked.
+/// cache entry outranks the defaults): config file, then fresh cache, then baked.
 pub async fn resolve(operation: &str) -> String {
-    user_override(operation)
+    seed_config();
+    config_id(operation)
         .or_else(|| fresh_cache(operation))
         .or_else(|| baked(operation))
         .unwrap_or_default()
