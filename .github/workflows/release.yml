@@ -25,8 +25,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      # Pinned to match rust-toolchain.toml: the target has to be installed for
+      # the same toolchain cargo will actually select.
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: 1.96.0
+          components: rustfmt, clippy
           targets: ${{ matrix.target }}
 
       # rusqlite compiles SQLite from C source, so musl needs its own C compiler.
