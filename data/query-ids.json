@@ -1,5 +1,22 @@
 {
   "TweetDetail": "jd3V43oDY9cY7obs1YMfbQ",
   "SearchTimeline": "Bcw3RzK-PatNAmbnw54hFw",
-  "CreateTweet": "R5EPiGHgSqbTYFyozd-gFw"
+  "CreateTweet": "R5EPiGHgSqbTYFyozd-gFw",
+  "UserByScreenName": "xc8f1g7BYqr6VTzTbvNlGw",
+  "UserTweets": "Wms1GvIiHXAPBaCr9KblaA",
+  "HomeLatestTimeline": "iOEZpOdfekFsxSlPQCQtPg",
+  "Bookmarks": "RV1g3b8n_SGOHwkqKYSCFw",
+  "ListLatestTweetsTimeline": "2TemLyqrMpTeAmysdbnVqw",
+  "ListOwnerships": "wQcOSjSQ8NtgxIwvYl1lMg",
+  "Following": "BEkNpEt5pNETESoqMsTEGA",
+  "Followers": "kuFUYP9eV1FPoEy4N-pi7w",
+  "Likes": "JR2gceKucIKcVNB_9JkhsA",
+  "FavoriteTweet": "lI07N6Otwv1PhnEgXILM7A",
+  "UnfavoriteTweet": "ZYKSe-w7KEslx3JhSIk5LA",
+  "CreateRetweet": "ojPdsZsimiJrUGLR1sjUtA",
+  "DeleteRetweet": "iQtK4dl5hBmXewYZuEOKVw",
+  "CreateFriendship": "8h9JVdV8dlSyqyRDJEPCsA",
+  "DestroyFriendship": "ppXWuagMNXgvzx6WoXBW0Q",
+  "CreateBookmark": "aoDbu3RHznuiSkQ9aNM67Q",
+  "DeleteBookmark": "Wlmlj2-xzyS1GN3a6cj-mQ"
 }

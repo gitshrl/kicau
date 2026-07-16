@@ -108,6 +108,35 @@ enum Command {
         #[arg(short = 'n', long, default_value_t = 20)]
         count: u32,
     },
+    /// Show a user's profile
+    User {
+        /// @handle (with or without @)
+        handle: String,
+    },
+    /// Show a user's tweets
+    UserTweets {
+        /// @handle (with or without @)
+        handle: String,
+        #[arg(short = 'n', long, default_value_t = 20)]
+        count: u32,
+    },
+    /// Show your chronological home timeline
+    Home {
+        #[arg(short = 'n', long, default_value_t = 20)]
+        count: u32,
+    },
+    /// Show your bookmarks
+    Bookmarks {
+        #[arg(short = 'n', long, default_value_t = 20)]
+        count: u32,
+    },
+    /// Show a list's tweets by list id
+    List {
+        /// List id
+        list: String,
+        #[arg(short = 'n', long, default_value_t = 20)]
+        count: u32,
+    },
 }
 
 struct Credentials {
@@ -208,6 +237,35 @@ async fn run() -> Result<()> {
             let id = extract::extract_tweet_id(&tweet);
             let tweets = client.get_thread(&id).await?;
             output::print_tweets(&tweets, cli.json, cli.plain, "No thread tweets found.");
+            archive(&tweets, cli.no_db);
+            Ok(())
+        }
+        Command::User { handle } => {
+            let profile = client.user(&handle).await?;
+            output::print_profile(&profile, cli.json, cli.plain);
+            Ok(())
+        }
+        Command::UserTweets { handle, count } => {
+            let tweets = client.user_tweets(&handle, count).await?;
+            output::print_tweets(&tweets, cli.json, cli.plain, "No tweets found.");
+            archive(&tweets, cli.no_db);
+            Ok(())
+        }
+        Command::Home { count } => {
+            let tweets = client.home(count).await?;
+            output::print_tweets(&tweets, cli.json, cli.plain, "No home tweets found.");
+            archive(&tweets, cli.no_db);
+            Ok(())
+        }
+        Command::Bookmarks { count } => {
+            let tweets = client.bookmarks(count).await?;
+            output::print_tweets(&tweets, cli.json, cli.plain, "No bookmarks found.");
+            archive(&tweets, cli.no_db);
+            Ok(())
+        }
+        Command::List { list, count } => {
+            let tweets = client.list_tweets(&list, count).await?;
+            output::print_tweets(&tweets, cli.json, cli.plain, "No list tweets found.");
             archive(&tweets, cli.no_db);
             Ok(())
         }

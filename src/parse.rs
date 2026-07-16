@@ -1,6 +1,30 @@
 use serde_json::Value;
 
-use crate::models::{Author, Tweet};
+use crate::models::{Author, Profile, Tweet};
+
+/// Map a UserByScreenName `data.user.result` into a Profile. X is migrating
+/// user fields from legacy.* to core.*, so both are tried.
+pub fn parse_user(result: &Value) -> Option<Profile> {
+    if result["__typename"] == "UserUnavailable" {
+        return None;
+    }
+    let handle = str_at(result, "/legacy/screen_name")
+        .or_else(|| str_at(result, "/core/screen_name"))?;
+    let name = str_at(result, "/legacy/name")
+        .or_else(|| str_at(result, "/core/name"))
+        .unwrap_or_else(|| handle.clone());
+    Some(Profile {
+        id: str_at(result, "/rest_id").unwrap_or_default(),
+        handle,
+        name,
+        bio: str_at(result, "/legacy/description").unwrap_or_default(),
+        followers: result.pointer("/legacy/followers_count").and_then(Value::as_u64).unwrap_or(0),
+        following: result.pointer("/legacy/friends_count").and_then(Value::as_u64).unwrap_or(0),
+        location: str_at(result, "/legacy/location").filter(|s| !s.is_empty()),
+        verified: result.pointer("/is_blue_verified").and_then(Value::as_bool).unwrap_or(false)
+            || result.pointer("/legacy/verified").and_then(Value::as_bool).unwrap_or(false),
+    })
+}
 
 /// Map a raw GraphQL `tweet_results.result` into a Tweet. Returns None when it
 /// lacks a legacy block or an author handle (cursors, tombstones, ads).
@@ -181,6 +205,34 @@ mod tests {
     fn iso_conversion_is_sortable_and_lenient() {
         assert_eq!(to_iso8601("Mon Jul 06 19:08:45 +0000 2026"), "2026-07-06T19:08:45.000Z");
         assert_eq!(to_iso8601("garbage"), "garbage");
+    }
+
+    #[test]
+    fn parses_user_profile() {
+        let result = json!({
+            "rest_id": "44196397",
+            "is_blue_verified": true,
+            "legacy": {
+                "screen_name": "elonmusk",
+                "name": "Elon Musk",
+                "description": "tech",
+                "followers_count": 200000000_u64,
+                "friends_count": 500,
+                "location": "Mars"
+            }
+        });
+        let p = parse_user(&result).unwrap();
+        assert_eq!(p.id, "44196397");
+        assert_eq!(p.handle, "elonmusk");
+        assert_eq!(p.name, "Elon Musk");
+        assert_eq!(p.followers, 200000000);
+        assert_eq!(p.location.as_deref(), Some("Mars"));
+        assert!(p.verified);
+    }
+
+    #[test]
+    fn unavailable_user_yields_none() {
+        assert!(parse_user(&json!({ "__typename": "UserUnavailable" })).is_none());
     }
 
     #[test]

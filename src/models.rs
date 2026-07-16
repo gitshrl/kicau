@@ -9,6 +9,20 @@ pub struct Author {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct Profile {
+    pub id: String,
+    pub handle: String,
+    pub name: String,
+    pub bio: String,
+    pub followers: u64,
+    pub following: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub location: Option<String>,
+    pub verified: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Tweet {
     pub id: String,
     pub text: String,

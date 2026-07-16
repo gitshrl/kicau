@@ -4,7 +4,7 @@ use anyhow::{anyhow, Result};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, InvalidHeaderValue};
 use serde_json::Value;
 
-use crate::models::Tweet;
+use crate::models::{Profile, Tweet};
 use crate::{parse, query_ids};
 
 /// Request shape per GraphQL operation. X routes these differently: reads take a
@@ -218,6 +218,67 @@ impl TwitterClient {
         Ok(parse::tweets_from_instructions(instructions))
     }
 
+    /// A profile by handle via UserByScreenName.
+    pub async fn user(&self, handle: &str) -> Result<Profile> {
+        let handle = handle.trim_start_matches('@');
+        let variables = serde_json::json!({
+            "screen_name": handle,
+            "withSafetyModeUserFields": true,
+        });
+        let data = self.fetch_graphql("UserByScreenName", variables, user_features(), Call::Read).await?;
+        parse::parse_user(&data["user"]["result"]).ok_or_else(|| anyhow!("user @{handle} not found"))
+    }
+
+    /// A user's own tweets: resolve the handle to a rest_id, then UserTweets.
+    pub async fn user_tweets(&self, handle: &str, count: u32) -> Result<Vec<Tweet>> {
+        let user = self.user(handle).await?;
+        let variables = serde_json::json!({
+            "userId": user.id,
+            "count": count,
+            "includePromotedContent": false,
+            "withQuickPromoteEligibilityTweetFields": true,
+            "withVoice": true,
+        });
+        self.timeline("UserTweets", variables, read_features(), "/user/result/timeline/timeline/instructions").await
+    }
+
+    /// The account's chronological home timeline.
+    pub async fn home(&self, count: u32) -> Result<Vec<Tweet>> {
+        let variables = serde_json::json!({
+            "count": count,
+            "includePromotedContent": true,
+            "latestControlAvailable": true,
+            "requestContext": "launch",
+            "withCommunity": true,
+        });
+        self.timeline("HomeLatestTimeline", variables, read_features(), "/home/home_timeline_urt/instructions").await
+    }
+
+    /// The account's bookmarks.
+    pub async fn bookmarks(&self, count: u32) -> Result<Vec<Tweet>> {
+        let variables = serde_json::json!({
+            "count": count,
+            "includePromotedContent": false,
+            "withDownvotePerspective": false,
+            "withReactionsMetadata": false,
+            "withReactionsPerspective": false,
+        });
+        self.timeline("Bookmarks", variables, bookmarks_features(), "/bookmark_timeline_v2/timeline/instructions").await
+    }
+
+    /// A list's latest tweets.
+    pub async fn list_tweets(&self, list_id: &str, count: u32) -> Result<Vec<Tweet>> {
+        let variables = serde_json::json!({ "listId": list_id, "count": count });
+        self.timeline("ListLatestTweetsTimeline", variables, read_features(), "/list/tweets_timeline/timeline/instructions").await
+    }
+
+    /// Shared read-timeline path: GraphQL GET, then parse tweets at `pointer`.
+    async fn timeline(&self, operation: &str, variables: Value, features: Value, pointer: &str) -> Result<Vec<Tweet>> {
+        let data = self.fetch_graphql(operation, variables, features, Call::Read).await?;
+        let instructions = data.pointer(pointer).cloned().unwrap_or(Value::Null);
+        Ok(parse::tweets_from_instructions(&instructions))
+    }
+
     /// Scrape current query ids for the given operations and update the cache.
     pub async fn refresh_query_ids(
         &self,
@@ -429,6 +490,70 @@ pub fn create_tweet_variables(text: &str, reply_to: Option<&str>) -> Value {
         });
     }
     variables
+}
+
+/// Feature flags for the Bookmarks timeline (requires the bookmark timeline switch).
+fn bookmarks_features() -> Value {
+    serde_json::json!({
+        "graphql_timeline_v2_bookmark_timeline": true,
+        "rweb_video_screen_enabled": true,
+        "profile_label_improvements_pcf_label_in_post_enabled": true,
+        "responsive_web_profile_redirect_enabled": true,
+        "rweb_tipjar_consumption_enabled": true,
+        "verified_phone_label_enabled": false,
+        "creator_subscriptions_tweet_preview_api_enabled": true,
+        "responsive_web_graphql_timeline_navigation_enabled": true,
+        "responsive_web_graphql_exclude_directive_enabled": true,
+        "responsive_web_graphql_skip_user_profile_image_extensions_enabled": false,
+        "premium_content_api_read_enabled": false,
+        "communities_web_enable_tweet_community_results_fetch": true,
+        "c9s_tweet_anatomy_moderator_badge_enabled": true,
+        "responsive_web_grok_analyze_button_fetch_trends_enabled": false,
+        "responsive_web_grok_analyze_post_followups_enabled": false,
+        "responsive_web_grok_annotations_enabled": false,
+        "responsive_web_jetfuel_frame": true,
+        "post_ctas_fetch_enabled": true,
+        "responsive_web_grok_share_attachment_enabled": true,
+        "responsive_web_edit_tweet_api_enabled": true,
+        "graphql_is_translatable_rweb_tweet_is_translatable_enabled": true,
+        "view_counts_everywhere_api_enabled": true,
+        "longform_notetweets_consumption_enabled": true,
+        "responsive_web_twitter_article_tweet_consumption_enabled": true,
+        "tweet_awards_web_tipping_enabled": false,
+        "responsive_web_grok_show_grok_translated_post": false,
+        "responsive_web_grok_analysis_button_from_backend": true,
+        "creator_subscriptions_quote_tweet_preview_enabled": false,
+        "freedom_of_speech_not_reach_fetch_enabled": true,
+        "standardized_nudges_misinfo": true,
+        "tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled": true,
+        "rweb_video_timestamps_enabled": true,
+        "longform_notetweets_rich_text_read_enabled": true,
+        "longform_notetweets_inline_media_enabled": true,
+        "responsive_web_grok_image_annotation_enabled": true,
+        "responsive_web_grok_imagine_annotation_enabled": true,
+        "responsive_web_grok_community_note_auto_translation_is_enabled": false,
+        "articles_preview_enabled": true,
+        "responsive_web_enhance_cards_enabled": false,
+    })
+}
+
+/// Feature flags for UserByScreenName (profile lookup carries its own set).
+fn user_features() -> Value {
+    serde_json::json!({
+        "hidden_profile_subscriptions_enabled": true,
+        "hidden_profile_likes_enabled": true,
+        "rweb_tipjar_consumption_enabled": true,
+        "responsive_web_graphql_exclude_directive_enabled": true,
+        "verified_phone_label_enabled": false,
+        "subscriptions_verification_info_is_identity_verified_enabled": true,
+        "subscriptions_verification_info_verified_since_enabled": true,
+        "highlights_tweets_tab_ui_enabled": true,
+        "responsive_web_twitter_article_notes_tab_enabled": true,
+        "subscriptions_feature_can_gift_premium": true,
+        "creator_subscriptions_tweet_preview_api_enabled": true,
+        "responsive_web_graphql_skip_user_profile_image_extensions_enabled": false,
+        "responsive_web_graphql_timeline_navigation_enabled": true,
+    })
 }
 
 /// Feature flags shared by the TweetDetail and SearchTimeline read queries.
