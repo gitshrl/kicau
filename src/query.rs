@@ -47,7 +47,7 @@ fn config_path() -> PathBuf {
 
 /// Write the compiled defaults to the config file on first run so the ids are
 /// visible and editable. Never overwrites an existing file.
-fn seed_config() {
+pub fn seed_config() {
     let path = config_path();
     if path.exists() {
         return;

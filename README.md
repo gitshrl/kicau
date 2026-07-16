@@ -17,6 +17,9 @@ cargo build --release
 
 ## Authentication
 
+Run `kicau init` once to create the config directories and a cookie-file
+template, then `kicau config` to see where everything lives.
+
 kicau uses two cookies from a logged-in X session: `auth_token` and `ct0`.
 It looks for them in this order:
 
@@ -61,8 +64,9 @@ kicau find "loops"                        # offline, over your local archive
 (bookmarks/tweets → SQLite) · `graph` (follow-graph snapshot) · `profiles`
 (profile snapshot) · `db stats` · `backup export|import` · `import` (X data export)
 
-**Account / maintenance**
-`whoami` · `check` · `update-query-ids`
+**Setup / maintenance**
+`init` (scaffold config dirs + cookie template) · `config` (show paths and
+credential source) · `whoami` · `check` · `update-query-ids`
 
 Run `kicau <command> --help` for options. Every write supports `--dry-run`.
 

@@ -43,6 +43,10 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Create config directories and seed defaults
+    Init,
+    /// Show configuration paths and where credentials resolve from
+    Config,
     /// Show which account the current credentials belong to
     Whoami,
     /// Show credential status and source
@@ -255,8 +259,10 @@ async fn run() -> Result<()> {
     if matches!(cli.command, Command::Check) {
         return check(cli.auth_token, cli.ct0, cli.timeout, cli.plain).await;
     }
-    // find/log are offline: they read the local archive, no credentials needed.
+    // These commands need no credentials.
     match &cli.command {
+        Command::Init => return init_command(),
+        Command::Config => return config_command(cli.json),
         Command::Find { query, count } => {
             let tweets = db::Db::open_default()?.find(query, *count)?;
             output::print_tweets(&tweets, cli.json, cli.plain, "No matching tweets archived.");
@@ -323,6 +329,8 @@ async fn run() -> Result<()> {
 
     match cli.command {
         Command::Check
+        | Command::Init
+        | Command::Config
         | Command::Find { .. }
         | Command::Log { .. }
         | Command::Db { .. }
@@ -691,4 +699,73 @@ async fn check(
 
 fn head(token: &str) -> String {
     token.chars().take(10).collect()
+}
+
+/// Create the config/state directories, seed the query-id defaults, and drop a
+/// cookie-file template. Idempotent — never overwrites existing files.
+fn init_command() -> Result<()> {
+    let state = config::state_dir();
+    let cfg = config::config_dir();
+    std::fs::create_dir_all(&state)?;
+    std::fs::create_dir_all(&cfg)?;
+    query::seed_config();
+
+    let cookie = state.join("cookies.env");
+    let fresh_cookie = !cookie.exists();
+    if fresh_cookie {
+        std::fs::write(&cookie, "AUTH_TOKEN=\nCT0=\n")?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&cookie, std::fs::Permissions::from_mode(0o600));
+        }
+    }
+
+    println!("✅ kicau initialized");
+    println!("   state:     {}", state.display());
+    println!("   config:    {}", cfg.display());
+    println!("   query ids: {}", cfg.join("query-ids.json").display());
+    if fresh_cookie {
+        println!("   cookies:   {} — fill in AUTH_TOKEN and CT0", cookie.display());
+    } else {
+        println!("   cookies:   {} (already present)", cookie.display());
+    }
+    Ok(())
+}
+
+/// Show where things live and where credentials resolve from.
+fn config_command(json: bool) -> Result<()> {
+    let state = config::state_dir();
+    let cfg = config::config_dir();
+    let cookie = state.join("cookies.env");
+    let db = state.join("kicau.sqlite");
+    let query_ids = cfg.join("query-ids.json");
+    let cache = cfg.join("query-ids-cache.json");
+    let source = config::resolve_credentials(None, None)
+        .map(|c| c.source)
+        .unwrap_or_else(|_| "not configured".to_string());
+
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({
+                "credentials": source,
+                "cookieFile": cookie.display().to_string(),
+                "database": db.display().to_string(),
+                "queryIds": query_ids.display().to_string(),
+                "queryIdsCache": cache.display().to_string(),
+            })
+        );
+        return Ok(());
+    }
+    let row = |label: &str, path: &std::path::Path| {
+        let mark = if path.exists() { "✓" } else { "–" };
+        println!("{label:14} {} {mark}", path.display());
+    };
+    println!("credentials:   {source}");
+    row("cookie file:", &cookie);
+    row("database:", &db);
+    row("query ids:", &query_ids);
+    row("query cache:", &cache);
+    Ok(())
 }
