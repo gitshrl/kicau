@@ -1,12 +1,9 @@
 # kicau
 
-A fast, single-binary CLI for X (Twitter) that talks to the private GraphQL API
-using your existing session cookies — no developer app, no OAuth dance. Every
+A single-binary CLI for X (Twitter) that talks to the private GraphQL API
+using your existing session cookies. No developer app, no OAuth dance. Every
 tweet it fetches is archived to a local SQLite database and is searchable
 offline.
-
-Written in Rust: static binary, quick startup, low memory, no Node/Python
-runtime.
 
 <p align="center">
   <img src="docs/mania.gif" alt="a cat dancing in ASCII">
@@ -49,8 +46,9 @@ Check what resolved with `kicau check`.
 ## Usage
 
 ```sh
+kicau mania # show a cat dancing in ASCII
 kicau whoami
-kicau read 2074208949205881033           # id or full URL
+kicau read 2074208949205881033 # id or full URL
 kicau search "rust async"
 kicau user ClaudeDevs
 kicau home -n 30
@@ -58,8 +56,7 @@ kicau tweet "hello from kicau"
 kicau tweet "with a picture" --media photo.png --alt "a description"
 kicau reply <id-or-url> "nice thread"
 kicau like <id> ; kicau retweet <id> ; kicau bookmark <id>
-kicau find "loops"                        # offline, over your local archive
-kicau mania                               # show a cat dancing in ASCII
+kicau find "loops" # offline, over your local archive
 ```
 
 ### Commands
@@ -95,7 +92,7 @@ Run `kicau <command> --help` for options. Every write supports `--dry-run`.
 
 ## Local storage
 
-- `~/.kicau/kicau.sqlite` — the tweet archive (tweets, profiles, collections,
+- `~/.kicau/kicau.sqlite` holds the tweet archive (tweets, profiles, collections,
   follow edges, profile snapshots, DMs), with FTS5 full-text search.
 - Reads archive by default; `find` and `log` query it with no network.
 - `kicau backup export <dir>` writes each table as git-friendly JSONL;
