@@ -104,19 +104,9 @@ impl TwitterClient {
         features: Value,
         call: Call,
     ) -> Result<Value> {
-        // Prefer the curated baked id (known-good) and fall back to a freshly
-        // scraped cache entry — X sometimes 404s a new bundle id it hasn't rolled
-        // out server-side while still honoring the older baked one.
-        let mut candidates = Vec::new();
-        if let Some(baked) = query_ids::baked(operation) {
-            candidates.push(baked);
-        }
-        let cached = query_ids::resolve(operation).await;
-        if !candidates.contains(&cached) {
-            candidates.push(cached);
-        }
-
-        for query_id in &candidates {
+        // Ordered candidates (user pin → baked → fresh cache); applies to reads
+        // and writes alike.
+        for query_id in &query_ids::candidates(operation) {
             match self.graphql_call_resilient(query_id, operation, &variables, &features, call).await {
                 Err(GqlError::Http { status: 404, .. }) => continue,
                 Err(e) => return Err(friendly(e)),
