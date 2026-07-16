@@ -142,6 +142,11 @@ enum Command {
         #[command(subcommand)]
         action: BackupAction,
     },
+    /// Import a downloaded X data export (a directory containing data/)
+    Import {
+        /// Path to the unzipped export root
+        dir: String,
+    },
     /// Scrape x.com for current GraphQL query ids and refresh the cache
     UpdateQueryIds,
     /// Full-text search the locally archived tweets
@@ -264,6 +269,19 @@ async fn run() -> Result<()> {
             output::print_tweets(&tweets, cli.json, cli.plain, "Nothing archived yet.");
             return Ok(());
         }
+        Command::Import { dir } => {
+            let root = std::path::Path::new(dir);
+            let account = std::fs::read_to_string(root.join("data/account.js"))
+                .map_err(|e| anyhow!("cannot read data/account.js: {e}"))?;
+            let author = parse::parse_archive_account(&account)
+                .ok_or_else(|| anyhow!("could not parse account.js"))?;
+            let tweets_js = std::fs::read_to_string(root.join("data/tweets.js"))
+                .map_err(|e| anyhow!("cannot read data/tweets.js: {e}"))?;
+            let tweets = parse::parse_archive_tweets(&tweets_js, &author);
+            let n = db::Db::open_default()?.archive_collection(&tweets, &author.id, "tweets")?;
+            println!("✅ imported {n} tweets from @{}'s archive", author.username);
+            return Ok(());
+        }
         Command::Backup { action } => {
             let mut db = db::Db::open_default()?;
             match action {
@@ -310,7 +328,8 @@ async fn run() -> Result<()> {
         | Command::Find { .. }
         | Command::Log { .. }
         | Command::Db { .. }
-        | Command::Backup { .. } => unreachable!("handled above"),
+        | Command::Backup { .. }
+        | Command::Import { .. } => unreachable!("handled above"),
         Command::Sync { what, limit } => {
             let user = client.current_user().await?;
             let tweets = match what.as_str() {

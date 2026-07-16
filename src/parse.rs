@@ -2,6 +2,47 @@ use serde_json::Value;
 
 use crate::models::{Author, DmConversation, DmMessage, Profile, Tweet};
 
+/// The `account.js` from an X data export → the archive owner as an Author.
+/// Files are JS-wrapped (`window.YTD.account.part0 = [...]`); the JSON array
+/// begins at the first `[`.
+pub fn parse_archive_account(js: &str) -> Option<Author> {
+    let arr = strip_js_wrapper(js)?;
+    let acct = arr.get(0)?.get("account")?;
+    let username = str_at(acct, "/username")?;
+    Some(Author {
+        name: str_at(acct, "/accountDisplayName").unwrap_or_else(|| username.clone()),
+        id: str_at(acct, "/accountId").unwrap_or_default(),
+        username,
+    })
+}
+
+/// The `tweets.js` from an X data export → owned tweets attributed to `author`.
+pub fn parse_archive_tweets(js: &str, author: &Author) -> Vec<Tweet> {
+    let Some(arr) = strip_js_wrapper(js) else { return Vec::new() };
+    let mut tweets = Vec::new();
+    for entry in as_array(&arr) {
+        let t = &entry["tweet"];
+        let Some(id) = str_at(t, "/id_str") else { continue };
+        tweets.push(Tweet {
+            id,
+            text: str_at(t, "/full_text").unwrap_or_default(),
+            author: author.clone(),
+            created_at: str_at(t, "/created_at").map(|d| to_iso8601(&d)),
+            reply_count: None,
+            retweet_count: str_at(t, "/retweet_count").and_then(|s| s.parse().ok()),
+            like_count: str_at(t, "/favorite_count").and_then(|s| s.parse().ok()),
+            conversation_id: None,
+            in_reply_to_status_id: str_at(t, "/in_reply_to_status_id_str"),
+        });
+    }
+    tweets
+}
+
+fn strip_js_wrapper(js: &str) -> Option<Value> {
+    let start = js.find('[')?;
+    serde_json::from_str(&js[start..]).ok()
+}
+
 /// Parse a DM `inbox_initial_state` into conversations and messages. `my_id` is
 /// the current account's user id, used to name one-to-one conversations by the
 /// other participant.
@@ -327,6 +368,28 @@ mod tests {
     #[test]
     fn unavailable_user_yields_none() {
         assert!(parse_user(&json!({ "__typename": "UserUnavailable" })).is_none());
+    }
+
+    #[test]
+    fn parses_x_data_export() {
+        let account_js = r#"window.YTD.account.part0 = [ { "account" : {
+            "accountId" : "77", "username" : "me", "accountDisplayName" : "Me" } } ]"#;
+        let author = parse_archive_account(account_js).unwrap();
+        assert_eq!(author.id, "77");
+        assert_eq!(author.username, "me");
+
+        let tweets_js = r#"window.YTD.tweets.part0 = [
+            { "tweet" : { "id_str" : "5", "full_text" : "archived tweet",
+              "created_at" : "Wed Oct 10 20:19:24 +0000 2018",
+              "favorite_count" : "9", "retweet_count" : "3" } }
+        ]"#;
+        let tweets = parse_archive_tweets(tweets_js, &author);
+        assert_eq!(tweets.len(), 1);
+        assert_eq!(tweets[0].id, "5");
+        assert_eq!(tweets[0].text, "archived tweet");
+        assert_eq!(tweets[0].author.username, "me");
+        assert_eq!(tweets[0].like_count, Some(9));
+        assert_eq!(tweets[0].created_at.as_deref(), Some("2018-10-10T20:19:24.000Z"));
     }
 
     #[test]
