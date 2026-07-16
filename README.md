@@ -12,20 +12,17 @@ runtime.
   <img src="docs/mania.gif" alt="a cat dancing in ASCII">
 </p>
 
+<p align="center">
+  <em>to make the cat dance, type <code>kicau mania</code> in your terminal</em>
+</p>
+
 ## Install
 
 ```sh
 cargo install --git https://github.com/gitshrl/kicau.git --locked
-```
 
-That builds and drops `kicau` in `~/.cargo/bin` — no clone, no checkout. `--locked`
-builds against the committed `Cargo.lock`. Re-run the same command to upgrade.
-
-From a checkout instead:
-
-```sh
+# or from a checkout:
 cargo build --release
-# binary at ./target/release/kicau
 ```
 
 ## Authentication
@@ -103,10 +100,3 @@ Run `kicau <command> --help` for options. Every write supports `--dry-run`.
 - Reads archive by default; `find` and `log` query it with no network.
 - `kicau backup export <dir>` writes each table as git-friendly JSONL;
   `backup import <dir>` restores.
-
-## Files
-
-| Path | Purpose |
-|---|---|
-| `~/.kicau/config.toml` | all config: credentials and GraphQL query ids |
-| `~/.kicau/kicau.sqlite` | local archive |
