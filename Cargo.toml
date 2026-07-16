@@ -1,8 +1,16 @@
 [package]
 name = "kicau"
 version = "0.1.0"
-edition = "2021"
-description = "kicau — a fast cookie-based X/Twitter GraphQL CLI with a local SQLite archive"
+edition = "2024"
+rust-version = "1.96"
+description = "Single-binary CLI for X (Twitter). Your session cookies, local SQLite archive."
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"
 
 [dependencies]
 reqwest = { version = "0.12", features = ["json", "rustls-tls", "multipart"], default-features = false }
@@ -13,7 +21,7 @@ serde_json = "1"
 toml = "0.8"
 regex = "1"
 anyhow = "1"
-thiserror = "1"
+thiserror = "2"
 rusqlite = { version = "0.32", features = ["bundled"] }
 sha2 = "0.10"
 base64 = "0.22"
