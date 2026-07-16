@@ -137,6 +137,22 @@ enum Command {
         #[arg(short = 'n', long, default_value_t = 20)]
         count: u32,
     },
+    /// Like a tweet
+    Like { tweet: String, #[arg(long)] dry_run: bool },
+    /// Remove a like from a tweet
+    Unlike { tweet: String, #[arg(long)] dry_run: bool },
+    /// Retweet a tweet
+    Retweet { tweet: String, #[arg(long)] dry_run: bool },
+    /// Remove a retweet
+    Unretweet { tweet: String, #[arg(long)] dry_run: bool },
+    /// Bookmark a tweet
+    Bookmark { tweet: String, #[arg(long)] dry_run: bool },
+    /// Remove a bookmark
+    Unbookmark { tweet: String, #[arg(long)] dry_run: bool },
+    /// Follow a user
+    Follow { handle: String, #[arg(long)] dry_run: bool },
+    /// Unfollow a user
+    Unfollow { handle: String, #[arg(long)] dry_run: bool },
 }
 
 struct Credentials {
@@ -267,6 +283,66 @@ async fn run() -> Result<()> {
             let tweets = client.list_tweets(&list, count).await?;
             output::print_tweets(&tweets, cli.json, cli.plain, "No list tweets found.");
             archive(&tweets, cli.no_db);
+            Ok(())
+        }
+        Command::Like { tweet, dry_run } => {
+            let id = extract::extract_tweet_id(&tweet);
+            if dry_run { println!("📝 [dry-run] would like {id}"); return Ok(()); }
+            client.like(&id).await?;
+            println!("❤️ liked {id}");
+            Ok(())
+        }
+        Command::Unlike { tweet, dry_run } => {
+            let id = extract::extract_tweet_id(&tweet);
+            if dry_run { println!("📝 [dry-run] would unlike {id}"); return Ok(()); }
+            client.unlike(&id).await?;
+            println!("✅ unliked {id}");
+            Ok(())
+        }
+        Command::Retweet { tweet, dry_run } => {
+            let id = extract::extract_tweet_id(&tweet);
+            if dry_run { println!("📝 [dry-run] would retweet {id}"); return Ok(()); }
+            client.retweet(&id).await?;
+            println!("🔁 retweeted {id}");
+            Ok(())
+        }
+        Command::Unretweet { tweet, dry_run } => {
+            let id = extract::extract_tweet_id(&tweet);
+            if dry_run { println!("📝 [dry-run] would unretweet {id}"); return Ok(()); }
+            client.unretweet(&id).await?;
+            println!("✅ unretweeted {id}");
+            Ok(())
+        }
+        Command::Bookmark { tweet, dry_run } => {
+            let id = extract::extract_tweet_id(&tweet);
+            if dry_run { println!("📝 [dry-run] would bookmark {id}"); return Ok(()); }
+            client.bookmark(&id).await?;
+            println!("🔖 bookmarked {id}");
+            Ok(())
+        }
+        Command::Unbookmark { tweet, dry_run } => {
+            let id = extract::extract_tweet_id(&tweet);
+            if dry_run { println!("📝 [dry-run] would unbookmark {id}"); return Ok(()); }
+            client.unbookmark(&id).await?;
+            println!("✅ unbookmarked {id}");
+            Ok(())
+        }
+        Command::Follow { handle, dry_run } => {
+            if dry_run {
+                println!("📝 [dry-run] would follow @{}", handle.trim_start_matches('@'));
+                return Ok(());
+            }
+            client.follow(&handle).await?;
+            println!("✅ followed @{}", handle.trim_start_matches('@'));
+            Ok(())
+        }
+        Command::Unfollow { handle, dry_run } => {
+            if dry_run {
+                println!("📝 [dry-run] would unfollow @{}", handle.trim_start_matches('@'));
+                return Ok(());
+            }
+            client.unfollow(&handle).await?;
+            println!("✅ unfollowed @{}", handle.trim_start_matches('@'));
             Ok(())
         }
         Command::UpdateQueryIds => {

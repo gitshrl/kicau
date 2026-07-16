@@ -62,9 +62,20 @@ impl TwitterClient {
     }
 
     fn headers(&self) -> std::result::Result<HeaderMap, InvalidHeaderValue> {
+        let mut headers = self.base_headers()?;
+        headers.insert(HeaderName::from_static("content-type"), HeaderValue::from_static("application/json"));
+        Ok(headers)
+    }
+
+    /// Headers without content-type, for form-encoded REST calls where reqwest's
+    /// `.form()` sets `application/x-www-form-urlencoded` itself.
+    fn form_headers(&self) -> std::result::Result<HeaderMap, InvalidHeaderValue> {
+        self.base_headers()
+    }
+
+    fn base_headers(&self) -> std::result::Result<HeaderMap, InvalidHeaderValue> {
         let pairs = [
             ("authorization", BEARER.to_string()),
-            ("content-type", "application/json".to_string()),
             ("x-csrf-token", self.ct0.clone()),
             ("x-twitter-auth-type", "OAuth2Session".to_string()),
             ("x-twitter-active-user", "yes".to_string()),
@@ -160,12 +171,15 @@ impl TwitterClient {
                 .post(&url)
                 .query(&[("variables", variables.to_string())])
                 .json(&serde_json::json!({ "features": features, "queryId": query_id })),
-            // Write: POST with everything in the body.
-            Call::Write => self.http.post(&url).json(&serde_json::json!({
-                "variables": variables,
-                "features": features,
-                "queryId": query_id,
-            })),
+            // Write: POST with everything in the body. Action mutations (like,
+            // retweet, bookmark) send no features — omit the key when null.
+            Call::Write => {
+                let mut body = serde_json::json!({ "variables": variables, "queryId": query_id });
+                if !features.is_null() {
+                    body["features"] = features.clone();
+                }
+                self.http.post(&url).json(&body)
+            }
         };
 
         let resp = req.headers(self.headers()?).send().await?;
@@ -277,6 +291,57 @@ impl TwitterClient {
         let data = self.fetch_graphql(operation, variables, features, Call::Read).await?;
         let instructions = data.pointer(pointer).cloned().unwrap_or(Value::Null);
         Ok(parse::tweets_from_instructions(&instructions))
+    }
+
+    pub async fn like(&self, tweet_id: &str) -> Result<()> {
+        self.action("FavoriteTweet", serde_json::json!({ "tweet_id": tweet_id })).await
+    }
+    pub async fn unlike(&self, tweet_id: &str) -> Result<()> {
+        self.action("UnfavoriteTweet", serde_json::json!({ "tweet_id": tweet_id })).await
+    }
+    pub async fn retweet(&self, tweet_id: &str) -> Result<()> {
+        self.action("CreateRetweet", serde_json::json!({ "tweet_id": tweet_id, "dark_request": false })).await
+    }
+    pub async fn unretweet(&self, tweet_id: &str) -> Result<()> {
+        self.action("DeleteRetweet", serde_json::json!({ "source_tweet_id": tweet_id, "dark_request": false })).await
+    }
+    pub async fn bookmark(&self, tweet_id: &str) -> Result<()> {
+        self.action("CreateBookmark", serde_json::json!({ "tweet_id": tweet_id })).await
+    }
+    pub async fn unbookmark(&self, tweet_id: &str) -> Result<()> {
+        self.action("DeleteBookmark", serde_json::json!({ "tweet_id": tweet_id })).await
+    }
+    pub async fn follow(&self, handle: &str) -> Result<()> {
+        let user = self.user(handle).await?;
+        self.friendship("create", &user.id).await
+    }
+    pub async fn unfollow(&self, handle: &str) -> Result<()> {
+        let user = self.user(handle).await?;
+        self.friendship("destroy", &user.id).await
+    }
+
+    /// GraphQL action mutation: POST with no features, success = no error.
+    async fn action(&self, operation: &str, variables: Value) -> Result<()> {
+        self.fetch_graphql(operation, variables, Value::Null, Call::Write).await?;
+        Ok(())
+    }
+
+    /// follow/unfollow via the REST v1.1 friendships endpoint (form-encoded).
+    async fn friendship(&self, action: &str, user_id: &str) -> Result<()> {
+        let url = format!("https://x.com/i/api/1.1/friendships/{action}.json");
+        let resp = self
+            .http
+            .post(&url)
+            .headers(self.form_headers()?)
+            .form(&[("user_id", user_id), ("skip_status", "true")])
+            .send()
+            .await?;
+        let status = resp.status();
+        let text = resp.text().await?;
+        if !status.is_success() {
+            return Err(anyhow!("HTTP {}: {}", status.as_u16(), truncate(&text, 200)));
+        }
+        Ok(())
     }
 
     /// Scrape current query ids for the given operations and update the cache.
