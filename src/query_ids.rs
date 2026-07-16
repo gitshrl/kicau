@@ -6,13 +6,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
-/// Compiled-in defaults — the seed for the user config file and the offline
-/// fallback if that file is missing.
-const DEFAULTS: &str = include_str!("../config/query-ids.json");
-
-/// Defaults parsed once at first use, not on every lookup.
-static DEFAULT_IDS: LazyLock<HashMap<String, String>> =
-    LazyLock::new(|| serde_json::from_str(DEFAULTS).unwrap_or_default());
+/// Defaults built once from the compiled-in table in `config`.
+static DEFAULT_IDS: LazyLock<HashMap<String, String>> = LazyLock::new(|| {
+    crate::config::QUERY_IDS.iter().map(|&(k, v)| (k.to_string(), v.to_string())).collect()
+});
 const TTL_SECS: u64 = 24 * 60 * 60;
 const UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36";
 const DISCOVERY_PAGES: &[&str] = &[
@@ -58,7 +55,10 @@ fn seed_config() {
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    let _ = std::fs::write(path, DEFAULTS);
+    let defaults: std::collections::BTreeMap<&str, &str> = crate::config::QUERY_IDS.iter().copied().collect();
+    if let Ok(json) = serde_json::to_string_pretty(&defaults) {
+        let _ = std::fs::write(path, json + "\n");
+    }
 }
 
 fn config_id(operation: &str) -> Option<String> {

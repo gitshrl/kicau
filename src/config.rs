@@ -4,6 +4,33 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Result};
 
+/// Compiled-in default GraphQL query ids — the seed for the user config file
+/// and the offline fallback. Curated known-good values; X rotates ids, so the
+/// runtime layers (config file, scraped cache) can override any of these.
+pub const QUERY_IDS: &[(&str, &str)] = &[
+    ("TweetDetail", "jd3V43oDY9cY7obs1YMfbQ"),
+    ("SearchTimeline", "Bcw3RzK-PatNAmbnw54hFw"),
+    ("CreateTweet", "R5EPiGHgSqbTYFyozd-gFw"),
+    ("DeleteTweet", "nxpZCY2K-I6QoFHAHeojFQ"),
+    ("UserByScreenName", "xc8f1g7BYqr6VTzTbvNlGw"),
+    ("UserTweets", "Wms1GvIiHXAPBaCr9KblaA"),
+    ("HomeLatestTimeline", "iOEZpOdfekFsxSlPQCQtPg"),
+    ("Bookmarks", "RV1g3b8n_SGOHwkqKYSCFw"),
+    ("ListLatestTweetsTimeline", "2TemLyqrMpTeAmysdbnVqw"),
+    ("ListOwnerships", "wQcOSjSQ8NtgxIwvYl1lMg"),
+    ("Following", "mWYeougg_ocJS2Vr1Vt28w"),
+    ("Followers", "SFYY3WsgwjlXSLlfnEUE4A"),
+    ("Likes", "JR2gceKucIKcVNB_9JkhsA"),
+    ("FavoriteTweet", "lI07N6Otwv1PhnEgXILM7A"),
+    ("UnfavoriteTweet", "ZYKSe-w7KEslx3JhSIk5LA"),
+    ("CreateRetweet", "mbRO74GrOvSfRcJnlMapnQ"),
+    ("DeleteRetweet", "iQtK4dl5hBmXewYZuEOKVw"),
+    ("CreateFriendship", "8h9JVdV8dlSyqyRDJEPCsA"),
+    ("DestroyFriendship", "ppXWuagMNXgvzx6WoXBW0Q"),
+    ("CreateBookmark", "aoDbu3RHznuiSkQ9aNM67Q"),
+    ("DeleteBookmark", "Wlmlj2-xzyS1GN3a6cj-mQ"),
+];
+
 /// `~/.kicau` — cookies and the SQLite store.
 pub fn state_dir() -> PathBuf {
     PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".kicau")
