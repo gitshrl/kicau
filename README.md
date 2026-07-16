@@ -24,9 +24,6 @@ curl -sL https://github.com/gitshrl/kicau/releases/latest/download/kicau-linux-x
 # macOS, Apple silicon
 curl -sL https://github.com/gitshrl/kicau/releases/latest/download/kicau-macos-arm64.tar.gz | tar xz
 
-# macOS, Intel
-curl -sL https://github.com/gitshrl/kicau/releases/latest/download/kicau-macos-x86_64.tar.gz | tar xz
-
 sudo mv kicau /usr/local/bin/
 kicau mania
 ```
