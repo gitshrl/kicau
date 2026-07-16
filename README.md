@@ -103,11 +103,3 @@ X routes each GraphQL operation through a rotating build-hash id. kicau ships
 curated defaults, seeds them into `~/.config/kicau/query-ids.json` (yours to
 edit), and self-heals on a 404 by scraping x.com for the current id
 (`kicau update-query-ids` forces a refresh).
-
-## Notes
-
-- **Posting works.** Content-creating writes require X's `x-client-transaction-id`
-  anti-automation header; kicau computes it. X changes that algorithm
-  periodically, so posting can break until the header logic is updated.
-- This uses X's private endpoints with your own session. Respect X's terms and
-  rate limits; treat your cookies like passwords.
