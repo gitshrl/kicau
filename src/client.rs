@@ -31,6 +31,8 @@ enum GqlError {
 }
 
 const TWITTER_API_BASE: &str = "https://x.com/i/api/graphql";
+const UPLOAD_URL: &str = "https://upload.twitter.com/i/media/upload.json";
+const MEDIA_METADATA_URL: &str = "https://x.com/i/api/1.1/media/metadata/create.json";
 const BEARER: &str = "Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA";
 const DEFAULT_USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
@@ -344,6 +346,99 @@ impl TwitterClient {
         Ok(())
     }
 
+    /// Chunked media upload (INIT → APPEND → FINALIZE → STATUS), returning the
+    /// media_id. Attaches alt text for images when provided.
+    pub async fn upload_media(&self, path: &std::path::Path, alt: Option<&str>) -> Result<String> {
+        let bytes = std::fs::read(path).map_err(|e| anyhow!("cannot read {}: {e}", path.display()))?;
+        let mime = mime_for_path(path)?;
+
+        let init = self
+            .upload_form(&[
+                ("command", "INIT"),
+                ("total_bytes", &bytes.len().to_string()),
+                ("media_type", &mime),
+                ("media_category", media_category(&mime)),
+            ])
+            .await?;
+        let media_id = init["media_id_string"]
+            .as_str()
+            .ok_or_else(|| anyhow!("upload INIT returned no media_id"))?
+            .to_string();
+
+        for (index, chunk) in bytes.chunks(5 * 1024 * 1024).enumerate() {
+            let part = reqwest::multipart::Part::bytes(chunk.to_vec())
+                .file_name("media")
+                .mime_str(&mime)?;
+            let form = reqwest::multipart::Form::new()
+                .text("command", "APPEND")
+                .text("media_id", media_id.clone())
+                .text("segment_index", index.to_string())
+                .part("media", part);
+            let resp = self.http.post(UPLOAD_URL).headers(self.form_headers()?).multipart(form).send().await?;
+            if !resp.status().is_success() {
+                let status = resp.status().as_u16();
+                let body = resp.text().await.unwrap_or_default();
+                return Err(anyhow!("upload APPEND HTTP {status}: {}", truncate(&body, 200)));
+            }
+        }
+
+        let fin = self.upload_form(&[("command", "FINALIZE"), ("media_id", &media_id)]).await?;
+        let processing = fin.pointer("/processing_info/state").and_then(Value::as_str);
+        if matches!(processing, Some(s) if s != "succeeded") {
+            self.await_media_processing(&media_id).await?;
+        }
+
+        if let Some(text) = alt {
+            if mime.starts_with("image/") && !text.is_empty() {
+                self.set_media_alt(&media_id, text).await?;
+            }
+        }
+        Ok(media_id)
+    }
+
+    async fn upload_form(&self, params: &[(&str, &str)]) -> Result<Value> {
+        let resp = self.http.post(UPLOAD_URL).headers(self.form_headers()?).form(params).send().await?;
+        let status = resp.status();
+        let text = resp.text().await?;
+        if !status.is_success() {
+            return Err(anyhow!("upload HTTP {}: {}", status.as_u16(), truncate(&text, 200)));
+        }
+        Ok(serde_json::from_str(&text).unwrap_or(Value::Null))
+    }
+
+    async fn await_media_processing(&self, media_id: &str) -> Result<()> {
+        for _ in 0..20 {
+            let resp = self
+                .http
+                .get(UPLOAD_URL)
+                .query(&[("command", "STATUS"), ("media_id", media_id)])
+                .headers(self.form_headers()?)
+                .send()
+                .await?;
+            let v: Value = serde_json::from_str(&resp.text().await?).unwrap_or(Value::Null);
+            match v.pointer("/processing_info/state").and_then(Value::as_str) {
+                Some("succeeded") | None => return Ok(()),
+                Some("failed") => return Err(anyhow!("media processing failed")),
+                _ => {
+                    let secs = v.pointer("/processing_info/check_after_secs").and_then(Value::as_u64).unwrap_or(2).max(1);
+                    tokio::time::sleep(Duration::from_secs(secs)).await;
+                }
+            }
+        }
+        Err(anyhow!("media processing timed out"))
+    }
+
+    async fn set_media_alt(&self, media_id: &str, text: &str) -> Result<()> {
+        let body = serde_json::json!({ "media_id": media_id, "alt_text": { "text": text } });
+        let resp = self.http.post(MEDIA_METADATA_URL).headers(self.headers()?).json(&body).send().await?;
+        if !resp.status().is_success() {
+            let status = resp.status().as_u16();
+            let b = resp.text().await.unwrap_or_default();
+            return Err(anyhow!("alt-text HTTP {status}: {}", truncate(&b, 200)));
+        }
+        Ok(())
+    }
+
     /// Scrape current query ids for the given operations and update the cache.
     pub async fn refresh_query_ids(
         &self,
@@ -383,13 +478,13 @@ impl TwitterClient {
     }
 
     /// Post a tweet, returning its new id.
-    pub async fn post_tweet(&self, text: &str) -> Result<String> {
-        self.create_tweet(create_tweet_variables(text, None)).await
+    pub async fn post_tweet(&self, text: &str, media_ids: &[String]) -> Result<String> {
+        self.create_tweet(create_tweet_variables(text, None, media_ids)).await
     }
 
     /// Reply to a tweet, returning the new reply's id.
-    pub async fn post_reply(&self, text: &str, reply_to: &str) -> Result<String> {
-        self.create_tweet(create_tweet_variables(text, Some(reply_to))).await
+    pub async fn post_reply(&self, text: &str, reply_to: &str, media_ids: &[String]) -> Result<String> {
+        self.create_tweet(create_tweet_variables(text, Some(reply_to), media_ids)).await
     }
 
     async fn create_tweet(&self, variables: Value) -> Result<String> {
@@ -541,11 +636,15 @@ fn friendly(err: GqlError) -> anyhow::Error {
 }
 
 /// CreateTweet variables for a tweet, or a reply when `reply_to` is set.
-pub fn create_tweet_variables(text: &str, reply_to: Option<&str>) -> Value {
+pub fn create_tweet_variables(text: &str, reply_to: Option<&str>, media_ids: &[String]) -> Value {
+    let entities: Vec<Value> = media_ids
+        .iter()
+        .map(|id| serde_json::json!({ "media_id": id, "tagged_users": [] }))
+        .collect();
     let mut variables = serde_json::json!({
         "tweet_text": text,
         "dark_request": false,
-        "media": { "media_entities": [], "possibly_sensitive": false },
+        "media": { "media_entities": entities, "possibly_sensitive": false },
         "semantic_annotation_ids": [],
     });
     if let Some(id) = reply_to {
@@ -555,6 +654,30 @@ pub fn create_tweet_variables(text: &str, reply_to: Option<&str>) -> Value {
         });
     }
     variables
+}
+
+fn mime_for_path(path: &std::path::Path) -> Result<String> {
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+    let mime = match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "mp4" => "video/mp4",
+        "mov" => "video/quicktime",
+        other => return Err(anyhow!("unsupported media type: .{other}")),
+    };
+    Ok(mime.to_string())
+}
+
+fn media_category(mime: &str) -> &'static str {
+    if mime == "image/gif" {
+        "tweet_gif"
+    } else if mime.starts_with("image/") {
+        "tweet_image"
+    } else {
+        "tweet_video"
+    }
 }
 
 /// Feature flags for the Bookmarks timeline (requires the bookmark timeline switch).
@@ -694,18 +817,33 @@ mod tests {
 
     #[test]
     fn tweet_variables_omit_reply_block() {
-        let v = create_tweet_variables("hello world", None);
+        let v = create_tweet_variables("hello world", None, &[]);
         assert_eq!(v["tweet_text"], "hello world");
         assert_eq!(v["dark_request"], false);
         assert!(v.get("reply").is_none());
+        assert_eq!(v["media"]["media_entities"], serde_json::json!([]));
     }
 
     #[test]
     fn reply_variables_carry_parent_id() {
-        let v = create_tweet_variables("nice", Some("123"));
+        let v = create_tweet_variables("nice", Some("123"), &[]);
         assert_eq!(v["tweet_text"], "nice");
         assert_eq!(v["reply"]["in_reply_to_tweet_id"], "123");
         assert_eq!(v["reply"]["exclude_reply_user_ids"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn media_ids_become_entities() {
+        let v = create_tweet_variables("pic", None, &["999".to_string()]);
+        assert_eq!(v["media"]["media_entities"][0]["media_id"], "999");
+        assert_eq!(v["media"]["media_entities"][0]["tagged_users"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn media_category_by_mime() {
+        assert_eq!(media_category("image/png"), "tweet_image");
+        assert_eq!(media_category("image/gif"), "tweet_gif");
+        assert_eq!(media_category("video/mp4"), "tweet_video");
     }
 
     #[test]

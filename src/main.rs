@@ -68,6 +68,12 @@ enum Command {
     Tweet {
         /// Tweet text
         text: String,
+        /// Attach a media file (repeatable, up to 4)
+        #[arg(long)]
+        media: Vec<String>,
+        /// Alt text for the media at the same position (repeatable)
+        #[arg(long)]
+        alt: Vec<String>,
         /// Print what would be posted without hitting X
         #[arg(long)]
         dry_run: bool,
@@ -78,6 +84,12 @@ enum Command {
         tweet: String,
         /// Reply text
         text: String,
+        /// Attach a media file (repeatable, up to 4)
+        #[arg(long)]
+        media: Vec<String>,
+        /// Alt text for the media at the same position (repeatable)
+        #[arg(long)]
+        alt: Vec<String>,
         /// Print what would be posted without hitting X
         #[arg(long)]
         dry_run: bool,
@@ -149,6 +161,14 @@ enum Command {
     Bookmark { tweet: String, #[arg(long)] dry_run: bool },
     /// Remove a bookmark
     Unbookmark { tweet: String, #[arg(long)] dry_run: bool },
+    /// Upload a media file and print its media_id
+    Upload {
+        /// Path to an image/gif/video
+        file: String,
+        /// Alt text (images only)
+        #[arg(long)]
+        alt: Option<String>,
+    },
     /// Follow a user
     Follow { handle: String, #[arg(long)] dry_run: bool },
     /// Unfollow a user
@@ -221,23 +241,31 @@ async fn run() -> Result<()> {
             archive(&tweets, cli.no_db);
             Ok(())
         }
-        Command::Tweet { text, dry_run } => {
+        Command::Tweet { text, media, alt, dry_run } => {
             if dry_run {
                 println!("📝 [dry-run] would tweet: {text}");
+                if !media.is_empty() {
+                    println!("   with media: {}", media.join(", "));
+                }
                 return Ok(());
             }
-            let id = client.post_tweet(&text).await?;
+            let media_ids = upload_all(&client, &media, &alt).await?;
+            let id = client.post_tweet(&text, &media_ids).await?;
             println!("✅ Tweet posted successfully!");
             println!("🔗 https://x.com/i/status/{id}");
             Ok(())
         }
-        Command::Reply { tweet, text, dry_run } => {
+        Command::Reply { tweet, text, media, alt, dry_run } => {
             let id = extract::extract_tweet_id(&tweet);
             if dry_run {
                 println!("📝 [dry-run] would reply to {id}: {text}");
+                if !media.is_empty() {
+                    println!("   with media: {}", media.join(", "));
+                }
                 return Ok(());
             }
-            let new_id = client.post_reply(&text, &id).await?;
+            let media_ids = upload_all(&client, &media, &alt).await?;
+            let new_id = client.post_reply(&text, &id, &media_ids).await?;
             println!("✅ Reply posted successfully!");
             println!("🔗 https://x.com/i/status/{new_id}");
             Ok(())
@@ -327,6 +355,13 @@ async fn run() -> Result<()> {
             println!("✅ unbookmarked {id}");
             Ok(())
         }
+        Command::Upload { file, alt } => {
+            let id = client
+                .upload_media(std::path::Path::new(&file), alt.as_deref())
+                .await?;
+            println!("{id}");
+            Ok(())
+        }
         Command::Follow { handle, dry_run } => {
             if dry_run {
                 println!("📝 [dry-run] would follow @{}", handle.trim_start_matches('@'));
@@ -358,6 +393,18 @@ async fn run() -> Result<()> {
             Ok(())
         }
     }
+}
+
+/// Upload each media file, pairing it with alt text by position, and return the
+/// resulting media_ids in order.
+async fn upload_all(client: &TwitterClient, media: &[String], alt: &[String]) -> Result<Vec<String>> {
+    let mut ids = Vec::with_capacity(media.len());
+    for (i, path) in media.iter().enumerate() {
+        let alt_text = alt.get(i).map(String::as_str).filter(|s| !s.is_empty());
+        let id = client.upload_media(std::path::Path::new(path), alt_text).await?;
+        ids.push(id);
+    }
+    Ok(ids)
 }
 
 /// Persist fetched tweets to the local archive. Best-effort: a DB failure warns
