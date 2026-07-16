@@ -91,6 +91,18 @@ CREATE TABLE IF NOT EXISTS dm_messages (
 );
 ";
 
+/// Base tables included in backup export/import (FTS is derived and rebuilt).
+const BACKUP_TABLES: &[&str] = &[
+    "accounts",
+    "profiles",
+    "tweets",
+    "tweet_collections",
+    "follow_edges",
+    "profile_snapshots",
+    "dm_conversations",
+    "dm_messages",
+];
+
 const SELECT: &str = "
 SELECT t.id, t.text, t.created_at, t.reply_to_id, t.like_count,
        p.id, p.handle, p.display_name
@@ -212,6 +224,67 @@ impl Db {
         Ok(())
     }
 
+    /// Dump every base table to `<dir>/<table>.jsonl` (git-friendly: one JSON
+    /// object per line, ordered by primary key). Returns the number of tables.
+    pub fn export_backup(&self, dir: &Path) -> Result<usize> {
+        std::fs::create_dir_all(dir)?;
+        for table in BACKUP_TABLES {
+            std::fs::write(dir.join(format!("{table}.jsonl")), self.dump_table(table)?)?;
+        }
+        Ok(BACKUP_TABLES.len())
+    }
+
+    /// Restore base tables from a backup directory (INSERT OR REPLACE), then
+    /// rebuild the FTS index. Returns the number of rows loaded.
+    pub fn import_backup(&mut self, dir: &Path) -> Result<usize> {
+        let mut total = 0;
+        for table in BACKUP_TABLES {
+            if let Ok(content) = std::fs::read_to_string(dir.join(format!("{table}.jsonl"))) {
+                total += self.load_table(table, &content)?;
+            }
+        }
+        self.conn.execute("DELETE FROM tweets_fts", [])?;
+        self.conn.execute("INSERT INTO tweets_fts(tweet_id, text) SELECT id, text FROM tweets", [])?;
+        Ok(total)
+    }
+
+    fn dump_table(&self, table: &str) -> Result<String> {
+        let mut stmt = self.conn.prepare(&format!("SELECT * FROM \"{table}\" ORDER BY 1"))?;
+        let cols: Vec<String> = (0..stmt.column_count())
+            .map(|i| stmt.column_name(i).unwrap_or("").to_string())
+            .collect();
+        let mut out = String::new();
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            let mut obj = serde_json::Map::new();
+            for (i, col) in cols.iter().enumerate() {
+                obj.insert(col.clone(), val_to_json(row.get::<_, rusqlite::types::Value>(i)?));
+            }
+            out.push_str(&serde_json::Value::Object(obj).to_string());
+            out.push('\n');
+        }
+        Ok(out)
+    }
+
+    fn load_table(&mut self, table: &str, jsonl: &str) -> Result<usize> {
+        let tx = self.conn.transaction()?;
+        let mut n = 0;
+        for line in jsonl.lines().filter(|l| !l.trim().is_empty()) {
+            let obj: serde_json::Map<String, serde_json::Value> = serde_json::from_str(line)?;
+            let cols: Vec<&String> = obj.keys().collect();
+            let col_list = cols.iter().map(|c| format!("\"{c}\"")).collect::<Vec<_>>().join(",");
+            let placeholders = (1..=cols.len()).map(|i| format!("?{i}")).collect::<Vec<_>>().join(",");
+            let vals: Vec<rusqlite::types::Value> = cols.iter().map(|c| json_to_val(&obj[*c])).collect();
+            tx.execute(
+                &format!("INSERT OR REPLACE INTO \"{table}\"({col_list}) VALUES({placeholders})"),
+                rusqlite::params_from_iter(vals),
+            )?;
+            n += 1;
+        }
+        tx.commit()?;
+        Ok(n)
+    }
+
     /// Row counts and on-disk size of the local store.
     pub fn stats(&self) -> Result<Stats> {
         let count = |sql: &str| -> Result<i64> { Ok(self.conn.query_row(sql, [], |r| r.get(0))?) };
@@ -323,6 +396,28 @@ fn row_to_tweet(row: &rusqlite::Row) -> rusqlite::Result<Tweet> {
     })
 }
 
+fn val_to_json(v: rusqlite::types::Value) -> serde_json::Value {
+    use rusqlite::types::Value as V;
+    match v {
+        V::Null => serde_json::Value::Null,
+        V::Integer(i) => serde_json::Value::from(i),
+        V::Real(f) => serde_json::Value::from(f),
+        V::Text(s) => serde_json::Value::from(s),
+        V::Blob(b) => serde_json::Value::from(String::from_utf8_lossy(&b).into_owned()),
+    }
+}
+
+fn json_to_val(v: &serde_json::Value) -> rusqlite::types::Value {
+    use rusqlite::types::Value as V;
+    match v {
+        serde_json::Value::Null => V::Null,
+        serde_json::Value::Bool(b) => V::Integer(*b as i64),
+        serde_json::Value::Number(n) => n.as_i64().map(V::Integer).unwrap_or_else(|| V::Real(n.as_f64().unwrap_or(0.0))),
+        serde_json::Value::String(s) => V::Text(s.clone()),
+        other => V::Text(other.to_string()),
+    }
+}
+
 fn now_secs() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
@@ -413,6 +508,29 @@ mod tests {
         assert_eq!(all[0].text, "edited");
         assert_eq!(db.find("edited", 10).unwrap().len(), 1);
         assert_eq!(db.find("first", 10).unwrap().len(), 0, "fts reindexed on update");
+    }
+
+    #[test]
+    fn backup_round_trips_and_rebuilds_fts() {
+        let mut src = db();
+        src.archive_collection(
+            &[tweet("42", "u42", "dave", "backup me", "2026-07-06T10:00:00.000Z")],
+            "acct1",
+            "bookmarks",
+        )
+        .unwrap();
+        let dir = std::path::PathBuf::from(std::env::temp_dir())
+            .join(format!("kicau-backup-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        src.export_backup(&dir).unwrap();
+
+        let mut restored = db();
+        restored.import_backup(&dir).unwrap();
+        let s = restored.stats().unwrap();
+        assert_eq!(s.tweets, 1);
+        assert_eq!(s.collections, 1);
+        assert_eq!(restored.find("backup", 10).unwrap().len(), 1, "fts rebuilt on import");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

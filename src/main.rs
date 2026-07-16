@@ -137,6 +137,11 @@ enum Command {
         #[command(subcommand)]
         action: DbAction,
     },
+    /// Export or restore the local store as git-friendly text
+    Backup {
+        #[command(subcommand)]
+        action: BackupAction,
+    },
     /// Scrape x.com for current GraphQL query ids and refresh the cache
     UpdateQueryIds,
     /// Full-text search the locally archived tweets
@@ -218,6 +223,14 @@ enum DbAction {
     Stats,
 }
 
+#[derive(Subcommand)]
+enum BackupAction {
+    /// Dump the store to <dir> as JSONL
+    Export { dir: String },
+    /// Restore the store from <dir>
+    Import { dir: String },
+}
+
 struct Credentials {
     auth_token: String,
     ct0: String,
@@ -251,6 +264,20 @@ async fn run() -> Result<()> {
             output::print_tweets(&tweets, cli.json, cli.plain, "Nothing archived yet.");
             return Ok(());
         }
+        Command::Backup { action } => {
+            let mut db = db::Db::open_default()?;
+            match action {
+                BackupAction::Export { dir } => {
+                    let n = db.export_backup(std::path::Path::new(dir))?;
+                    println!("✅ exported {n} tables to {dir}");
+                }
+                BackupAction::Import { dir } => {
+                    let n = db.import_backup(std::path::Path::new(dir))?;
+                    println!("✅ imported {n} rows from {dir}");
+                }
+            }
+            return Ok(());
+        }
         Command::Db { action: DbAction::Stats } => {
             let s = db::Db::open_default()?.stats()?;
             if cli.json {
@@ -279,9 +306,11 @@ async fn run() -> Result<()> {
     )?;
 
     match cli.command {
-        Command::Check | Command::Find { .. } | Command::Log { .. } | Command::Db { .. } => {
-            unreachable!("handled above")
-        }
+        Command::Check
+        | Command::Find { .. }
+        | Command::Log { .. }
+        | Command::Db { .. }
+        | Command::Backup { .. } => unreachable!("handled above"),
         Command::Sync { what, limit } => {
             let user = client.current_user().await?;
             let tweets = match what.as_str() {
