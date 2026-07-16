@@ -1,16 +1,18 @@
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
-use std::sync::LazyLock;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::{LazyLock, Mutex};
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
 
 /// Defaults built once from the compiled-in table in `config`.
 static DEFAULT_IDS: LazyLock<HashMap<String, String>> = LazyLock::new(|| {
     crate::config::QUERY_IDS.iter().map(|&(k, v)| (k.to_string(), v.to_string())).collect()
 });
-const TTL_SECS: u64 = 24 * 60 * 60;
+
+/// Ids scraped by this process. The 404 self-heal records what it found here so
+/// the retry — and every later call in the same command — skips the scrape.
+/// Deliberately not persisted: a rotated id is rare, and a scrape is cheap next
+/// to a stale id cached on disk. Pin an id in `config.toml` to make it stick.
+static SCRAPED: LazyLock<Mutex<HashMap<String, String>>> = LazyLock::new(Default::default);
 const UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36";
 const DISCOVERY_PAGES: &[&str] = &[
     "https://x.com/?lang=en",
@@ -26,13 +28,13 @@ pub fn baked(operation: &str) -> Option<String> {
 }
 
 /// Ordered, deduped ids to try for an operation: a user pin from
-/// `config.toml`'s `[query_ids]` first, then the compiled default, then a
-/// still-fresh scraped cache entry. X sometimes 404s a freshly-shipped bundle id
-/// it hasn't rolled out server-side, so trying the curated id before the scraped
-/// one is deliberate.
+/// `config.toml`'s `[query_ids]` first, then the compiled default, then anything
+/// this process scraped. X sometimes 404s a freshly-shipped bundle id it hasn't
+/// rolled out server-side, so trying the curated id before the scraped one is
+/// deliberate.
 pub fn candidates(operation: &str) -> Vec<String> {
     let mut out = Vec::new();
-    for id in [crate::config::query_id_override(operation), baked(operation), fresh_cache(operation)]
+    for id in [crate::config::query_id_override(operation), baked(operation), scraped(operation)]
         .into_iter()
         .flatten()
     {
@@ -43,11 +45,8 @@ pub fn candidates(operation: &str) -> Vec<String> {
     out
 }
 
-fn fresh_cache(operation: &str) -> Option<String> {
-    let snapshot = read_cache()?;
-    (now().saturating_sub(snapshot.fetched_at) <= TTL_SECS)
-        .then(|| snapshot.ids.get(operation).cloned())
-        .flatten()
+fn scraped(operation: &str) -> Option<String> {
+    SCRAPED.lock().ok()?.get(operation).cloned()
 }
 
 /// Pull `operationName -> queryId` pairs for the wanted operations out of an
@@ -74,46 +73,17 @@ pub fn extract_operations(js: &str, targets: &[&str]) -> HashMap<String, String>
     out
 }
 
-#[derive(Serialize, Deserialize)]
-struct Snapshot {
-    fetched_at: u64,
-    ids: HashMap<String, String>,
-}
-
-fn now() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
-}
-
-fn cache_path() -> PathBuf {
-    crate::config::state_dir().join("query-ids-cache.json")
-}
-
-fn read_cache() -> Option<Snapshot> {
-    let raw = std::fs::read_to_string(cache_path()).ok()?;
-    serde_json::from_str(&raw).ok()
-}
-
-fn write_cache(snapshot: &Snapshot) {
-    let path = cache_path();
-    if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
-    if let Ok(json) = serde_json::to_string_pretty(snapshot) {
-        let _ = std::fs::write(path, json);
-    }
-}
-
-/// Single best id for an operation, used right after a forced scrape (so a fresh
-/// cache entry outranks the defaults): config override, fresh cache, then baked.
+/// Single best id for an operation, used right after a forced scrape (so the
+/// scraped id outranks the defaults): config override, scraped, then baked.
 pub async fn resolve(operation: &str) -> String {
     crate::config::query_id_override(operation)
-        .or_else(|| fresh_cache(operation))
+        .or_else(|| scraped(operation))
         .or_else(|| baked(operation))
         .unwrap_or_default()
 }
 
-/// Scrape x.com bundles for current ids of `operations`, merge into the cache.
-/// This is the 404 self-heal: called when a baked/cached id has rotated out.
+/// Scrape x.com bundles for current ids of `operations`, recording them for the
+/// rest of this process. The 404 self-heal: called when a baked id has rotated out.
 pub async fn force_refresh(http: &reqwest::Client, operations: &[&str]) -> Result<HashMap<String, String>> {
     let bundles = discover_bundles(http).await?;
     let mut found = HashMap::new();
@@ -129,9 +99,9 @@ pub async fn force_refresh(http: &reqwest::Client, operations: &[&str]) -> Resul
     if found.is_empty() {
         anyhow::bail!("no query ids discovered; x.com bundle layout may have changed");
     }
-    let mut ids = read_cache().map(|s| s.ids).unwrap_or_default();
-    ids.extend(found.clone());
-    write_cache(&Snapshot { fetched_at: now(), ids });
+    if let Ok(mut cache) = SCRAPED.lock() {
+        cache.extend(found.clone());
+    }
     Ok(found)
 }
 

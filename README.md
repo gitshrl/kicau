@@ -95,4 +95,3 @@ Run `kicau <command> --help` for options. Every write supports `--dry-run`.
 |---|---|
 | `~/.kicau/config.toml` | all config: credentials and GraphQL query ids |
 | `~/.kicau/kicau.sqlite` | local archive |
-| `~/.kicau/query-ids-cache.json` | auto-refreshed query-id cache |

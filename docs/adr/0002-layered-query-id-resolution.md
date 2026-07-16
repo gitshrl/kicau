@@ -20,15 +20,19 @@ up.
 Resolve an operation's id through ordered candidates, trying each until one does
 not 404:
 
-1. **User config** — `~/.config/kicau/query-ids.json` (seeded from defaults,
+1. **User config** — `~/.kicau/config.toml` `[query_ids]` (seeded from defaults,
    hand-editable; a pinned id is never auto-clobbered).
 2. **Compiled-in curated defaults** — a typed const table, known-good values.
-3. **Freshly scraped cache** — `~/.config/kicau/query-ids-cache.json`, filled by
-   scraping x.com bundles, with a 24h TTL.
+3. **Scraped this process** — ids recovered by scraping x.com bundles, held in
+   memory for the life of the command.
 
 If every candidate 404s, scrape current ids and retry once. Crucially, the
-curated default is tried **before** the scraped cache, because a curated
+curated default is tried **before** the scraped id, because a curated
 older-but-honored id beats a freshly-shipped-but-not-yet-deployed one.
+
+Scraped ids are not persisted. A rotation is rare and a scrape is cheap next to
+a stale id cached on disk; an id worth keeping goes in `config.toml`, which the
+program never rewrites.
 
 ## Consequences
 

@@ -743,7 +743,6 @@ fn config_command(json: bool) -> Result<()> {
     let state = config::state_dir();
     let config_file = config::config_toml_path();
     let db = state.join("kicau.sqlite");
-    let cache = state.join("query-ids-cache.json");
     let source = config::resolve_credentials(None, None)
         .map(|c| c.source)
         .unwrap_or_else(|_| "not configured".to_string());
@@ -755,7 +754,6 @@ fn config_command(json: bool) -> Result<()> {
                 "credentials": source,
                 "config": config_file.display().to_string(),
                 "database": db.display().to_string(),
-                "queryIdsCache": cache.display().to_string(),
             })
         );
         return Ok(());
@@ -767,6 +765,5 @@ fn config_command(json: bool) -> Result<()> {
     println!("credentials:   {source}");
     row("config:", &config_file);
     row("database:", &db);
-    row("query cache:", &cache);
     Ok(())
 }
