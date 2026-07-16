@@ -4,7 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::Result;
 use rusqlite::{params, Connection};
 
-use crate::models::{Author, Profile, Tweet};
+use crate::models::{Author, DmConversation, DmMessage, Profile, Tweet};
 
 // Normalized tweet archive. profiles is keyed by the stable X user id; handle is
 // deliberately not unique because X recycles handles across ids over time.
@@ -74,6 +74,20 @@ CREATE TABLE IF NOT EXISTS profile_snapshots (
     following_count integer not null default 0,
     location text,
     primary key (profile_id, observed_at)
+);
+CREATE TABLE IF NOT EXISTS dm_conversations (
+    id text primary key,
+    kind text not null,
+    title text not null,
+    updated_at text not null
+);
+CREATE TABLE IF NOT EXISTS dm_messages (
+    id text primary key,
+    conversation_id text not null,
+    sender_id text not null,
+    sender_handle text not null,
+    text text not null,
+    created_at text not null
 );
 ";
 
@@ -173,6 +187,31 @@ impl Db {
         Ok(())
     }
 
+    /// Persist DM conversations and messages (idempotent upserts).
+    pub fn save_dms(&mut self, conversations: &[DmConversation], messages: &[DmMessage]) -> Result<()> {
+        let now = now_secs().to_string();
+        let tx = self.conn.transaction()?;
+        for c in conversations {
+            tx.execute(
+                "INSERT INTO dm_conversations(id, kind, title, updated_at) VALUES(?1, ?2, ?3, ?4)
+                 ON CONFLICT(id) DO UPDATE SET kind=excluded.kind, title=excluded.title, updated_at=excluded.updated_at",
+                params![c.id, c.kind, c.title, now],
+            )?;
+        }
+        for m in messages {
+            if m.id.is_empty() {
+                continue;
+            }
+            tx.execute(
+                "INSERT INTO dm_messages(id, conversation_id, sender_id, sender_handle, text, created_at)
+                 VALUES(?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT(id) DO NOTHING",
+                params![m.id, m.conversation_id, m.sender_id, m.sender_handle, m.text, m.created_at],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Row counts and on-disk size of the local store.
     pub fn stats(&self) -> Result<Stats> {
         let count = |sql: &str| -> Result<i64> { Ok(self.conn.query_row(sql, [], |r| r.get(0))?) };
@@ -183,6 +222,7 @@ impl Db {
             profiles: count("SELECT count(*) FROM profiles")?,
             collections: count("SELECT count(*) FROM tweet_collections")?,
             edges: count("SELECT count(*) FROM follow_edges")?,
+            dms: count("SELECT count(*) FROM dm_messages")?,
             bytes: page_count * page_size,
         })
     }
@@ -217,6 +257,7 @@ pub struct Stats {
     pub profiles: i64,
     pub collections: i64,
     pub edges: i64,
+    pub dms: i64,
     pub bytes: i64,
 }
 

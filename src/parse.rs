@@ -1,6 +1,83 @@
 use serde_json::Value;
 
-use crate::models::{Author, Profile, Tweet};
+use crate::models::{Author, DmConversation, DmMessage, Profile, Tweet};
+
+/// Parse a DM `inbox_initial_state` into conversations and messages. `my_id` is
+/// the current account's user id, used to name one-to-one conversations by the
+/// other participant.
+pub fn parse_dm_inbox(data: &Value, my_id: &str) -> (Vec<DmConversation>, Vec<DmMessage>) {
+    let inbox = &data["inbox_initial_state"];
+    let users = &inbox["users"];
+    let handle = |id: &str| -> String {
+        users
+            .get(id)
+            .and_then(|u| u.get("screen_name"))
+            .and_then(Value::as_str)
+            .unwrap_or(id)
+            .to_string()
+    };
+
+    let mut conversations = Vec::new();
+    if let Some(map) = inbox["conversations"].as_object() {
+        for (id, conv) in map {
+            let others: Vec<String> = as_array(&conv["participants"])
+                .iter()
+                .filter_map(|p| str_at(p, "/user_id"))
+                .filter(|uid| uid != my_id)
+                .map(|uid| format!("@{}", handle(&uid)))
+                .collect();
+            conversations.push(DmConversation {
+                id: id.clone(),
+                kind: str_at(conv, "/type").unwrap_or_default(),
+                title: if others.is_empty() { id.clone() } else { others.join(", ") },
+            });
+        }
+    }
+
+    let mut messages = Vec::new();
+    for entry in as_array(&inbox["entries"]) {
+        let message = &entry["message"];
+        if message.is_null() {
+            continue;
+        }
+        let md = &message["message_data"];
+        let sender = str_at(md, "/sender_id").unwrap_or_default();
+        messages.push(DmMessage {
+            id: str_at(message, "/id").unwrap_or_default(),
+            conversation_id: str_at(message, "/conversation_id").unwrap_or_default(),
+            sender_handle: handle(&sender),
+            sender_id: sender,
+            text: str_at(md, "/text").unwrap_or_default(),
+            created_at: unix_millis_to_iso(json_millis(&md["time"])),
+        });
+    }
+    messages.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+    (conversations, messages)
+}
+
+fn json_millis(v: &Value) -> i64 {
+    v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok())).unwrap_or(0)
+}
+
+/// Unix milliseconds → ISO 8601 UTC, no external date dependency (Hinnant's
+/// civil-from-days algorithm).
+pub fn unix_millis_to_iso(ms: i64) -> String {
+    let secs = ms.div_euclid(1000);
+    let days = secs.div_euclid(86_400);
+    let tod = secs.rem_euclid(86_400);
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let year = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if month <= 2 { year + 1 } else { year };
+    let (h, mi, s) = (tod / 3600, (tod % 3600) / 60, tod % 60);
+    format!("{year:04}-{month:02}-{day:02}T{h:02}:{mi:02}:{s:02}.000Z")
+}
 
 /// Map a UserByScreenName `data.user.result` into a Profile. X is migrating
 /// user fields from legacy.* to core.*, so both are tried.
@@ -250,6 +327,38 @@ mod tests {
     #[test]
     fn unavailable_user_yields_none() {
         assert!(parse_user(&json!({ "__typename": "UserUnavailable" })).is_none());
+    }
+
+    #[test]
+    fn unix_millis_to_iso_known_values() {
+        assert_eq!(unix_millis_to_iso(0), "1970-01-01T00:00:00.000Z");
+        assert_eq!(unix_millis_to_iso(1_000_000_000_000), "2001-09-09T01:46:40.000Z");
+    }
+
+    #[test]
+    fn parses_dm_inbox() {
+        let data = json!({
+            "inbox_initial_state": {
+                "users": {
+                    "me": { "screen_name": "me" },
+                    "them": { "screen_name": "alice" }
+                },
+                "conversations": {
+                    "c1": { "type": "ONE_TO_ONE", "participants": [{ "user_id": "me" }, { "user_id": "them" }] }
+                },
+                "entries": [
+                    { "message": { "id": "m2", "conversation_id": "c1", "message_data": { "sender_id": "them", "text": "hi back", "time": "1000000001000" } } },
+                    { "message": { "id": "m1", "conversation_id": "c1", "message_data": { "sender_id": "me", "text": "hi", "time": 1000000000000_i64 } } }
+                ]
+            }
+        });
+        let (convs, msgs) = parse_dm_inbox(&data, "me");
+        assert_eq!(convs.len(), 1);
+        assert_eq!(convs[0].title, "@alice", "one-to-one names the other participant");
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].id, "m1", "sorted oldest first");
+        assert_eq!(msgs[0].sender_handle, "me");
+        assert_eq!(msgs[1].text, "hi back");
     }
 
     #[test]

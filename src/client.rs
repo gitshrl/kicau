@@ -4,7 +4,7 @@ use anyhow::{anyhow, Result};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, InvalidHeaderValue};
 use serde_json::Value;
 
-use crate::models::{Profile, Tweet};
+use crate::models::{DmConversation, DmMessage, Profile, Tweet};
 use crate::{parse, query_ids};
 
 /// Request shape per GraphQL operation. X routes these differently: reads take a
@@ -380,6 +380,28 @@ impl TwitterClient {
             return Err(anyhow!("HTTP {}: {}", status.as_u16(), truncate(&text, 200)));
         }
         Ok(())
+    }
+
+    /// The DM inbox: recent conversations and messages across all threads.
+    pub async fn dm_inbox(&self) -> Result<(Vec<DmConversation>, Vec<DmMessage>)> {
+        let me = self.current_user().await?;
+        let resp = self
+            .http
+            .get("https://x.com/i/api/1.1/dm/inbox_initial_state.json")
+            .query(&[
+                ("include_conversation_info", "true"),
+                ("nsfw_filtering_enabled", "false"),
+            ])
+            .headers(self.headers()?)
+            .send()
+            .await?;
+        let status = resp.status();
+        let text = resp.text().await?;
+        if !status.is_success() {
+            return Err(anyhow!("HTTP {}: {}", status.as_u16(), truncate(&text, 200)));
+        }
+        let data: Value = serde_json::from_str(&text)?;
+        Ok(parse::parse_dm_inbox(&data, &me.id))
     }
 
     /// Chunked media upload (INIT → APPEND → FINALIZE → STATUS), returning the

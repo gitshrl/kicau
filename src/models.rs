@@ -23,6 +23,25 @@ pub struct Profile {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct DmConversation {
+    pub id: String,
+    pub kind: String,
+    pub title: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DmMessage {
+    pub id: String,
+    pub conversation_id: String,
+    pub sender_id: String,
+    pub sender_handle: String,
+    pub text: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Tweet {
     pub id: String,
     pub text: String,

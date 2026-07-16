@@ -125,6 +125,13 @@ enum Command {
         /// @handle
         handle: String,
     },
+    /// List DM conversations
+    Dms,
+    /// Show messages in a DM conversation (by id or @handle)
+    Dm {
+        /// Conversation id or the other participant's @handle
+        conversation: String,
+    },
     /// Show local database stats
     Db {
         #[command(subcommand)]
@@ -249,13 +256,14 @@ async fn run() -> Result<()> {
             if cli.json {
                 println!(
                     "{}",
-                    serde_json::json!({ "tweets": s.tweets, "profiles": s.profiles, "collections": s.collections, "edges": s.edges, "bytes": s.bytes })
+                    serde_json::json!({ "tweets": s.tweets, "profiles": s.profiles, "collections": s.collections, "edges": s.edges, "dms": s.dms, "bytes": s.bytes })
                 );
             } else {
                 println!("tweets:      {}", s.tweets);
                 println!("profiles:    {}", s.profiles);
                 println!("collections: {}", s.collections);
                 println!("edges:       {}", s.edges);
+                println!("dms:         {}", s.dms);
                 println!("size:        {} KiB", s.bytes / 1024);
             }
             return Ok(());
@@ -307,6 +315,30 @@ async fn run() -> Result<()> {
             output::print_profile(&profile, cli.json, cli.plain);
             if !cli.no_db {
                 db::Db::open_default()?.save_profile(&profile)?;
+            }
+            Ok(())
+        }
+        Command::Dms => {
+            let (convs, msgs) = client.dm_inbox().await?;
+            output::print_dm_conversations(&convs, cli.json);
+            if !cli.no_db {
+                db::Db::open_default()?.save_dms(&convs, &msgs)?;
+            }
+            Ok(())
+        }
+        Command::Dm { conversation } => {
+            let (convs, msgs) = client.dm_inbox().await?;
+            // accept a conversation id or the other participant's @handle
+            let needle = format!("@{}", conversation.trim_start_matches('@'));
+            let target = convs
+                .iter()
+                .find(|c| c.id == conversation || c.title == needle || c.title.contains(&needle))
+                .map(|c| c.id.clone())
+                .unwrap_or(conversation);
+            let thread: Vec<_> = msgs.iter().filter(|m| m.conversation_id == target).cloned().collect();
+            output::print_dm_messages(&thread, cli.json);
+            if !cli.no_db {
+                db::Db::open_default()?.save_dms(&convs, &msgs)?;
             }
             Ok(())
         }

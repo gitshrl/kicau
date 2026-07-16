@@ -1,4 +1,34 @@
-use crate::models::{Profile, Tweet};
+use crate::models::{DmConversation, DmMessage, Profile, Tweet};
+
+/// DM conversation list.
+pub fn print_dm_conversations(convs: &[DmConversation], json: bool) {
+    if json {
+        println!("{}", serde_json::to_string_pretty(convs).unwrap_or_default());
+        return;
+    }
+    if convs.is_empty() {
+        println!("No conversations.");
+        return;
+    }
+    for c in convs {
+        println!("{}  [{}]", c.title, c.id);
+    }
+}
+
+/// DM message thread, oldest first.
+pub fn print_dm_messages(msgs: &[DmMessage], json: bool) {
+    if json {
+        println!("{}", serde_json::to_string_pretty(msgs).unwrap_or_default());
+        return;
+    }
+    if msgs.is_empty() {
+        println!("No messages.");
+        return;
+    }
+    for m in msgs {
+        println!("@{} ({}): {}", m.sender_handle, m.created_at, m.text);
+    }
+}
 
 /// Profile view (user).
 pub fn print_profile(p: &Profile, json: bool, plain: bool) {
