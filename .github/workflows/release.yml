@@ -30,7 +30,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.96.0
-          components: rustfmt, clippy
           targets: ${{ matrix.target }}
 
       # rusqlite compiles SQLite from C source, so musl needs its own C compiler.
