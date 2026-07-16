@@ -94,12 +94,4 @@ Run `kicau <command> --help` for options. Every write supports `--dry-run`.
 |---|---|
 | `~/.kicau/cookies.env` | session cookies |
 | `~/.kicau/kicau.sqlite` | local archive |
-| `~/.config/kicau/query-ids.json` | GraphQL query ids (seeded, editable) |
-| `~/.config/kicau/query-ids-cache.json` | auto-refreshed query-id cache |
-
-### Query ids
-
-X routes each GraphQL operation through a rotating build-hash id. kicau ships
-curated defaults, seeds them into `~/.config/kicau/query-ids.json` (yours to
-edit), and self-heals on a 404 by scraping x.com for the current id
-(`kicau update-query-ids` forces a refresh).
+| `~/.config/kicau/` | app config and caches |
