@@ -192,6 +192,8 @@ enum Command {
         #[arg(short = 'n', long, default_value_t = 20)]
         count: u32,
     },
+    /// Delete one of your own tweets
+    Delete { tweet: String, #[arg(long)] dry_run: bool },
     /// Like a tweet
     Like { tweet: String, #[arg(long)] dry_run: bool },
     /// Remove a like from a tweet
@@ -481,6 +483,13 @@ async fn run() -> Result<()> {
             let tweets = client.list_tweets(&list, count).await?;
             output::print_tweets(&tweets, cli.json, cli.plain, "No list tweets found.");
             archive(&tweets, cli.no_db);
+            Ok(())
+        }
+        Command::Delete { tweet, dry_run } => {
+            let id = extract::extract_tweet_id(&tweet);
+            if dry_run { println!("📝 [dry-run] would delete {id}"); return Ok(()); }
+            client.delete_tweet(&id).await?;
+            println!("🗑️ deleted {id}");
             Ok(())
         }
         Command::Like { tweet, dry_run } => {

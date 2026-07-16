@@ -309,6 +309,10 @@ impl TwitterClient {
         Ok(parse::tweets_from_instructions(&instructions))
     }
 
+    /// Delete one of your own tweets.
+    pub async fn delete_tweet(&self, tweet_id: &str) -> Result<()> {
+        self.action("DeleteTweet", serde_json::json!({ "tweet_id": tweet_id, "dark_request": false })).await
+    }
     pub async fn like(&self, tweet_id: &str) -> Result<()> {
         self.action("FavoriteTweet", serde_json::json!({ "tweet_id": tweet_id })).await
     }
