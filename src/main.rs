@@ -5,6 +5,7 @@ mod models;
 mod output;
 mod parse;
 mod query_ids;
+mod transaction_id;
 
 use std::time::Duration;
 

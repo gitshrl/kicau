@@ -41,6 +41,7 @@ pub struct TwitterClient {
     ct0: String,
     user_agent: String,
     http: reqwest::Client,
+    txid: tokio::sync::OnceCell<Option<crate::transaction_id::TxidGenerator>>,
 }
 
 pub struct CurrentUser {
@@ -60,7 +61,23 @@ impl TwitterClient {
             ct0,
             user_agent: DEFAULT_USER_AGENT.to_string(),
             http,
+            txid: tokio::sync::OnceCell::new(),
         })
+    }
+
+    /// The `x-client-transaction-id` for a request, derived once per process from
+    /// the live home page. Best-effort: None if the page layout ever changes.
+    async fn client_transaction_id(&self, method: &str, path: &str) -> Option<String> {
+        let cookie = format!("auth_token={}; ct0={}", self.auth_token, self.ct0);
+        let generator = self
+            .txid
+            .get_or_init(|| async {
+                crate::transaction_id::TxidGenerator::fetch(&self.http, &cookie, &self.user_agent)
+                    .await
+                    .ok()
+            })
+            .await;
+        generator.as_ref().map(|g| g.generate(method, path))
     }
 
     fn headers(&self) -> std::result::Result<HeaderMap, InvalidHeaderValue> {
@@ -174,7 +191,15 @@ impl TwitterClient {
             }
         };
 
-        let resp = req.headers(self.headers()?).send().await?;
+        let mut req = req.headers(self.headers()?);
+        // Content-creating writes (CreateTweet) need X's anti-automation header.
+        if matches!(call, Call::Write) {
+            let path = format!("/i/api/graphql/{query_id}/{operation}");
+            if let Some(txid) = self.client_transaction_id("POST", &path).await {
+                req = req.header("x-client-transaction-id", txid);
+            }
+        }
+        let resp = req.send().await?;
         let status = resp.status();
         let text = resp.text().await?;
         if !status.is_success() {

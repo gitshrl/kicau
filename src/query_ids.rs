@@ -34,11 +34,9 @@ pub fn baked(operation: &str) -> Option<String> {
 /// the older curated id before the scraped one is deliberate.
 pub fn candidates(operation: &str) -> Vec<String> {
     let mut out = Vec::new();
-    for id in [user_override(operation), baked(operation), fresh_cache(operation)] {
-        if let Some(id) = id {
-            if !id.is_empty() && !out.contains(&id) {
-                out.push(id);
-            }
+    for id in [user_override(operation), baked(operation), fresh_cache(operation)].into_iter().flatten() {
+        if !id.is_empty() && !out.contains(&id) {
+            out.push(id);
         }
     }
     out
