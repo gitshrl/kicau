@@ -11,6 +11,15 @@ runtime.
 ## Install
 
 ```sh
+cargo install --git https://github.com/gitshrl/kicau.git --locked
+```
+
+That builds and drops `kicau` in `~/.cargo/bin` — no clone, no checkout. `--locked`
+builds against the committed `Cargo.lock`. Re-run the same command to upgrade.
+
+From a checkout instead:
+
+```sh
 cargo build --release
 # binary at ./target/release/kicau
 ```
