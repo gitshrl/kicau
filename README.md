@@ -17,20 +17,22 @@ cargo build --release
 
 ## Authentication
 
-Run `kicau init` once to create the config directories and a cookie-file
-template, then `kicau config` to see where everything lives.
+Run `kicau init` once to create `~/.kicau/config.toml`, fill in your two session
+cookies, then `kicau config` to see where everything lives.
 
-kicau uses two cookies from a logged-in X session: `auth_token` and `ct0`.
-It looks for them in this order:
+```toml
+# ~/.kicau/config.toml
+[credentials]
+auth_token = "..."
+ct0 = "..."
+```
+
+kicau resolves `auth_token` and `ct0` in this order:
 
 1. `--auth-token` / `--ct0` flags
 2. `KICAU_AUTH_TOKEN` / `KICAU_CT0`, or `AUTH_TOKEN` / `CT0` environment variables
-3. `~/.kicau/cookies.env` — a shell-style file:
-   ```sh
-   AUTH_TOKEN=...
-   CT0=...
-   ```
-4. `~/.config/kicau/config.json` — `{"authToken": "...", "ct0": "..."}`
+3. `~/.kicau/config.toml` `[credentials]`
+4. `~/.kicau/cookies.env` — a shell-style `AUTH_TOKEN=…` / `CT0=…` file
 
 Check what resolved with `kicau check`.
 
@@ -92,6 +94,7 @@ Run `kicau <command> --help` for options. Every write supports `--dry-run`.
 
 | Path | Purpose |
 |---|---|
-| `~/.kicau/cookies.env` | session cookies |
+| `~/.kicau/config.toml` | credentials + optional query-id overrides |
+| `~/.kicau/cookies.env` | session cookies (fallback) |
 | `~/.kicau/kicau.sqlite` | local archive |
-| `~/.config/kicau/` | app config and caches |
+| `~/.kicau/query-ids-cache.json` | auto-refreshed query-id cache |

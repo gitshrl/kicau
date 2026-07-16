@@ -25,45 +25,22 @@ pub fn baked(operation: &str) -> Option<String> {
     DEFAULT_IDS.get(operation).cloned()
 }
 
-/// Ordered, deduped ids to try for an operation: the config file
-/// (`~/.config/kicau/query-ids.json`, seeded from the compiled defaults and yours
-/// to edit) first, then the compiled fallback, then a still-fresh scraped cache
-/// entry. X sometimes 404s a freshly-shipped bundle id it hasn't rolled out
-/// server-side, so trying the curated id before the scraped one is deliberate.
+/// Ordered, deduped ids to try for an operation: a user pin from
+/// `config.toml`'s `[query_ids]` first, then the compiled default, then a
+/// still-fresh scraped cache entry. X sometimes 404s a freshly-shipped bundle id
+/// it hasn't rolled out server-side, so trying the curated id before the scraped
+/// one is deliberate.
 pub fn candidates(operation: &str) -> Vec<String> {
-    seed_config();
     let mut out = Vec::new();
-    for id in [config_id(operation), baked(operation), fresh_cache(operation)].into_iter().flatten() {
+    for id in [crate::config::query_id_override(operation), baked(operation), fresh_cache(operation)]
+        .into_iter()
+        .flatten()
+    {
         if !id.is_empty() && !out.contains(&id) {
             out.push(id);
         }
     }
     out
-}
-
-fn config_path() -> PathBuf {
-    crate::config::config_dir().join("query-ids.json")
-}
-
-/// Write the compiled defaults to the config file on first run so the ids are
-/// visible and editable. Never overwrites an existing file.
-pub fn seed_config() {
-    let path = config_path();
-    if path.exists() {
-        return;
-    }
-    if let Some(dir) = path.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
-    let defaults: std::collections::BTreeMap<&str, &str> = crate::config::QUERY_IDS.iter().copied().collect();
-    if let Ok(json) = serde_json::to_string_pretty(&defaults) {
-        let _ = std::fs::write(path, json + "\n");
-    }
-}
-
-fn config_id(operation: &str) -> Option<String> {
-    let raw = std::fs::read_to_string(config_path()).ok()?;
-    serde_json::from_str::<HashMap<String, String>>(&raw).ok()?.get(operation).cloned()
 }
 
 fn fresh_cache(operation: &str) -> Option<String> {
@@ -108,7 +85,7 @@ fn now() -> u64 {
 }
 
 fn cache_path() -> PathBuf {
-    crate::config::config_dir().join("query-ids-cache.json")
+    crate::config::state_dir().join("query-ids-cache.json")
 }
 
 fn read_cache() -> Option<Snapshot> {
@@ -127,10 +104,9 @@ fn write_cache(snapshot: &Snapshot) {
 }
 
 /// Single best id for an operation, used right after a forced scrape (so a fresh
-/// cache entry outranks the defaults): config file, then fresh cache, then baked.
+/// cache entry outranks the defaults): config override, fresh cache, then baked.
 pub async fn resolve(operation: &str) -> String {
-    seed_config();
-    config_id(operation)
+    crate::config::query_id_override(operation)
         .or_else(|| fresh_cache(operation))
         .or_else(|| baked(operation))
         .unwrap_or_default()

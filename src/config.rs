@@ -1,8 +1,10 @@
-//! Filesystem layout and credential resolution.
+//! Filesystem layout, the `~/.kicau/config.toml` file, and credential resolution.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Result};
+use serde::Deserialize;
 
 /// Compiled-in default GraphQL query ids — the seed for the user config file
 /// and the offline fallback. Curated known-good values; X rotates ids, so the
@@ -31,14 +33,41 @@ pub const QUERY_IDS: &[(&str, &str)] = &[
     ("DeleteBookmark", "Wlmlj2-xzyS1GN3a6cj-mQ"),
 ];
 
-/// `~/.kicau` — cookies and the SQLite store.
+/// `~/.kicau` — the single home for config, cookies, cache, and the SQLite store.
 pub fn state_dir() -> PathBuf {
     PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".kicau")
 }
 
-/// `~/.config/kicau` — query-id config/cache and the credentials config file.
-pub fn config_dir() -> PathBuf {
-    PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".config/kicau")
+/// `~/.kicau/config.toml` — the unified config file.
+pub fn config_toml_path() -> PathBuf {
+    state_dir().join("config.toml")
+}
+
+#[derive(Deserialize, Default)]
+struct FileConfig {
+    #[serde(default)]
+    credentials: CredsSection,
+    /// Optional per-operation query-id overrides.
+    #[serde(default)]
+    query_ids: HashMap<String, String>,
+}
+
+#[derive(Deserialize, Default)]
+struct CredsSection {
+    auth_token: Option<String>,
+    ct0: Option<String>,
+}
+
+fn load_config() -> FileConfig {
+    std::fs::read_to_string(config_toml_path())
+        .ok()
+        .and_then(|s| toml::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+/// A user-pinned query id from `config.toml`'s `[query_ids]`, if set.
+pub fn query_id_override(operation: &str) -> Option<String> {
+    load_config().query_ids.get(operation).cloned().and_then(|v| nonempty(Some(v)))
 }
 
 pub struct Credentials {
@@ -47,7 +76,7 @@ pub struct Credentials {
     pub source: String,
 }
 
-/// Precedence: CLI flags → env vars → cookie file → config file.
+/// Precedence: CLI flags → env vars → config.toml `[credentials]` → cookies.env.
 pub fn resolve_credentials(flag_auth: Option<String>, flag_ct0: Option<String>) -> Result<Credentials> {
     if let (Some(auth_token), Some(ct0)) = (nonempty(flag_auth), nonempty(flag_ct0)) {
         return Ok(Credentials { auth_token, ct0, source: "CLI flags".into() });
@@ -59,20 +88,22 @@ pub fn resolve_credentials(flag_auth: Option<String>, flag_ct0: Option<String>) 
         return Ok(Credentials { auth_token, ct0, source: "environment variables".into() });
     }
 
+    let cfg = load_config();
+    if let (Some(auth_token), Some(ct0)) =
+        (nonempty(cfg.credentials.auth_token), nonempty(cfg.credentials.ct0))
+    {
+        return Ok(Credentials { auth_token, ct0, source: config_toml_path().display().to_string() });
+    }
+
     let cookie_file = state_dir().join("cookies.env");
     if let Some(creds) = from_env_file(&cookie_file) {
         return Ok(creds);
     }
 
-    let config_json = config_dir().join("config.json");
-    if let Some(creds) = from_config_json(&config_json) {
-        return Ok(creds);
-    }
-
     Err(anyhow!(
         "missing credentials — provide --auth-token/--ct0, AUTH_TOKEN/CT0 env vars, {}, or {}",
-        cookie_file.display(),
-        config_json.display()
+        config_toml_path().display(),
+        cookie_file.display()
     ))
 }
 
@@ -98,14 +129,6 @@ fn from_env_file(path: &Path) -> Option<Credentials> {
         ct0: pick(&["KICAU_CT0", "CT0"])?,
         source: path.display().to_string(),
     })
-}
-
-fn from_config_json(path: &Path) -> Option<Credentials> {
-    let content = std::fs::read_to_string(path).ok()?;
-    let v: serde_json::Value = serde_json::from_str(&content).ok()?;
-    let auth_token = nonempty(v.get("authToken").and_then(|x| x.as_str()).map(str::to_string))?;
-    let ct0 = nonempty(v.get("ct0").and_then(|x| x.as_str()).map(str::to_string))?;
-    Some(Credentials { auth_token, ct0, source: path.display().to_string() })
 }
 
 fn first_env(keys: &[&str]) -> Option<String> {

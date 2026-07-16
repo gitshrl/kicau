@@ -701,34 +701,41 @@ fn head(token: &str) -> String {
     token.chars().take(10).collect()
 }
 
-/// Create the config/state directories, seed the query-id defaults, and drop a
-/// cookie-file template. Idempotent — never overwrites existing files.
+const CONFIG_TEMPLATE: &str = "\
+# kicau config
+
+[credentials]
+auth_token = \"\"
+ct0 = \"\"
+
+# Optional: pin GraphQL query ids X has rotated, e.g.
+# [query_ids]
+# CreateBookmark = \"...\"
+";
+
+/// Create `~/.kicau` and drop a `config.toml` template. Idempotent — never
+/// overwrites an existing config.
 fn init_command() -> Result<()> {
     let state = config::state_dir();
-    let cfg = config::config_dir();
     std::fs::create_dir_all(&state)?;
-    std::fs::create_dir_all(&cfg)?;
-    query::seed_config();
 
-    let cookie = state.join("cookies.env");
-    let fresh_cookie = !cookie.exists();
-    if fresh_cookie {
-        std::fs::write(&cookie, "AUTH_TOKEN=\nCT0=\n")?;
+    let config_file = config::config_toml_path();
+    let fresh = !config_file.exists();
+    if fresh {
+        std::fs::write(&config_file, CONFIG_TEMPLATE)?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&cookie, std::fs::Permissions::from_mode(0o600));
+            let _ = std::fs::set_permissions(&config_file, std::fs::Permissions::from_mode(0o600));
         }
     }
 
     println!("✅ kicau initialized");
-    println!("   state:     {}", state.display());
-    println!("   config:    {}", cfg.display());
-    println!("   query ids: {}", cfg.join("query-ids.json").display());
-    if fresh_cookie {
-        println!("   cookies:   {} — fill in AUTH_TOKEN and CT0", cookie.display());
+    println!("   state:  {}", state.display());
+    if fresh {
+        println!("   config: {} — fill in auth_token and ct0", config_file.display());
     } else {
-        println!("   cookies:   {} (already present)", cookie.display());
+        println!("   config: {} (already present)", config_file.display());
     }
     Ok(())
 }
@@ -736,11 +743,10 @@ fn init_command() -> Result<()> {
 /// Show where things live and where credentials resolve from.
 fn config_command(json: bool) -> Result<()> {
     let state = config::state_dir();
-    let cfg = config::config_dir();
+    let config_file = config::config_toml_path();
     let cookie = state.join("cookies.env");
     let db = state.join("kicau.sqlite");
-    let query_ids = cfg.join("query-ids.json");
-    let cache = cfg.join("query-ids-cache.json");
+    let cache = state.join("query-ids-cache.json");
     let source = config::resolve_credentials(None, None)
         .map(|c| c.source)
         .unwrap_or_else(|_| "not configured".to_string());
@@ -750,9 +756,9 @@ fn config_command(json: bool) -> Result<()> {
             "{}",
             serde_json::json!({
                 "credentials": source,
+                "config": config_file.display().to_string(),
                 "cookieFile": cookie.display().to_string(),
                 "database": db.display().to_string(),
-                "queryIds": query_ids.display().to_string(),
                 "queryIdsCache": cache.display().to_string(),
             })
         );
@@ -763,9 +769,9 @@ fn config_command(json: bool) -> Result<()> {
         println!("{label:14} {} {mark}", path.display());
     };
     println!("credentials:   {source}");
+    row("config:", &config_file);
     row("cookie file:", &cookie);
     row("database:", &db);
-    row("query ids:", &query_ids);
     row("query cache:", &cache);
     Ok(())
 }
