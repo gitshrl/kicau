@@ -32,7 +32,6 @@ kicau resolves `auth_token` and `ct0` in this order:
 1. `--auth-token` / `--ct0` flags
 2. `KICAU_AUTH_TOKEN` / `KICAU_CT0`, or `AUTH_TOKEN` / `CT0` environment variables
 3. `~/.kicau/config.toml` `[credentials]`
-4. `~/.kicau/cookies.env` — a shell-style `AUTH_TOKEN=…` / `CT0=…` file
 
 Check what resolved with `kicau check`.
 
@@ -94,7 +93,6 @@ Run `kicau <command> --help` for options. Every write supports `--dry-run`.
 
 | Path | Purpose |
 |---|---|
-| `~/.kicau/config.toml` | credentials and GraphQL query ids |
-| `~/.kicau/cookies.env` | session cookies (fallback) |
+| `~/.kicau/config.toml` | all config: credentials and GraphQL query ids |
 | `~/.kicau/kicau.sqlite` | local archive |
 | `~/.kicau/query-ids-cache.json` | auto-refreshed query-id cache |

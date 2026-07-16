@@ -742,7 +742,6 @@ fn init_command() -> Result<()> {
 fn config_command(json: bool) -> Result<()> {
     let state = config::state_dir();
     let config_file = config::config_toml_path();
-    let cookie = state.join("cookies.env");
     let db = state.join("kicau.sqlite");
     let cache = state.join("query-ids-cache.json");
     let source = config::resolve_credentials(None, None)
@@ -755,7 +754,6 @@ fn config_command(json: bool) -> Result<()> {
             serde_json::json!({
                 "credentials": source,
                 "config": config_file.display().to_string(),
-                "cookieFile": cookie.display().to_string(),
                 "database": db.display().to_string(),
                 "queryIdsCache": cache.display().to_string(),
             })
@@ -768,7 +766,6 @@ fn config_command(json: bool) -> Result<()> {
     };
     println!("credentials:   {source}");
     row("config:", &config_file);
-    row("cookie file:", &cookie);
     row("database:", &db);
     row("query cache:", &cache);
     Ok(())

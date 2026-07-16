@@ -1,7 +1,7 @@
 //! Filesystem layout, the `~/.kicau/config.toml` file, and credential resolution.
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use anyhow::{anyhow, Result};
 use serde::Deserialize;
@@ -76,7 +76,7 @@ pub struct Credentials {
     pub source: String,
 }
 
-/// Precedence: CLI flags → env vars → config.toml `[credentials]` → cookies.env.
+/// Precedence: CLI flags → env vars → config.toml `[credentials]`.
 pub fn resolve_credentials(flag_auth: Option<String>, flag_ct0: Option<String>) -> Result<Credentials> {
     if let (Some(auth_token), Some(ct0)) = (nonempty(flag_auth), nonempty(flag_ct0)) {
         return Ok(Credentials { auth_token, ct0, source: "CLI flags".into() });
@@ -95,40 +95,10 @@ pub fn resolve_credentials(flag_auth: Option<String>, flag_ct0: Option<String>) 
         return Ok(Credentials { auth_token, ct0, source: config_toml_path().display().to_string() });
     }
 
-    let cookie_file = state_dir().join("cookies.env");
-    if let Some(creds) = from_env_file(&cookie_file) {
-        return Ok(creds);
-    }
-
     Err(anyhow!(
-        "missing credentials — provide --auth-token/--ct0, AUTH_TOKEN/CT0 env vars, {}, or {}",
-        config_toml_path().display(),
-        cookie_file.display()
+        "missing credentials — set [credentials] in {}, or pass --auth-token/--ct0 or AUTH_TOKEN/CT0",
+        config_toml_path().display()
     ))
-}
-
-fn from_env_file(path: &Path) -> Option<Credentials> {
-    let content = std::fs::read_to_string(path).ok()?;
-    let mut vars = std::collections::HashMap::new();
-    for line in content.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let line = line.strip_prefix("export ").unwrap_or(line);
-        let Some((key, val)) = line.split_once('=') else { continue };
-        let val = val.trim().trim_matches(|c| c == '"' || c == '\'').to_string();
-        if let Some(val) = nonempty(Some(val)) {
-            vars.insert(key.trim().to_string(), val);
-        }
-    }
-    // resolve by key priority, not line order
-    let pick = |keys: &[&str]| keys.iter().find_map(|k| vars.get(*k).cloned());
-    Some(Credentials {
-        auth_token: pick(&["KICAU_AUTH_TOKEN", "AUTH_TOKEN"])?,
-        ct0: pick(&["KICAU_CT0", "CT0"])?,
-        source: path.display().to_string(),
-    })
 }
 
 fn first_env(keys: &[&str]) -> Option<String> {
@@ -142,26 +112,22 @@ fn nonempty(v: Option<String>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
 
     #[test]
-    fn parses_cookie_env_file_by_key_priority() {
-        let f = tempfile("parse");
-        writeln!(&f.0, "AUTH_TOKEN=abc123\nKICAU_CT0=kk\nCT0=\"def456\"\n# comment").unwrap();
-        let creds = from_env_file(Path::new(&f.1)).expect("should parse");
-        assert_eq!(creds.auth_token, "abc123");
-        assert_eq!(creds.ct0, "kk"); // KICAU_CT0 wins over CT0; quotes would strip
+    fn parses_credentials_and_query_ids() {
+        let cfg: FileConfig = toml::from_str(
+            "[credentials]\nauth_token = \"abc\"\nct0 = \"def\"\n\n[query_ids]\nSearchTimeline = \"PINNED\"\n",
+        )
+        .unwrap();
+        assert_eq!(cfg.credentials.auth_token.as_deref(), Some("abc"));
+        assert_eq!(cfg.credentials.ct0.as_deref(), Some("def"));
+        assert_eq!(cfg.query_ids.get("SearchTimeline").map(String::as_str), Some("PINNED"));
     }
 
     #[test]
-    fn missing_key_yields_none() {
-        let f = tempfile("missing");
-        writeln!(&f.0, "AUTH_TOKEN=only").unwrap();
-        assert!(from_env_file(Path::new(&f.1)).is_none());
-    }
-
-    fn tempfile(tag: &str) -> (std::fs::File, String) {
-        let path = format!("{}/kicau-test-{}-{}.env", std::env::temp_dir().display(), std::process::id(), tag);
-        (std::fs::File::create(&path).unwrap(), path)
+    fn missing_sections_default_empty() {
+        let cfg: FileConfig = toml::from_str("").unwrap();
+        assert!(cfg.credentials.auth_token.is_none());
+        assert!(cfg.query_ids.is_empty());
     }
 }
