@@ -153,7 +153,7 @@ enum Command {
         /// Path to the unzipped export root
         dir: String,
     },
-    /// Scrape x.com for current GraphQL query ids and refresh the cache
+    /// Scrape x.com for the current GraphQL query ids
     UpdateQueryIds,
     /// Full-text search the locally archived tweets
     Find {
@@ -228,6 +228,8 @@ enum Command {
     Blocks { action: String, handle: String, #[arg(long)] dry_run: bool },
     /// Mute or unmute a user (action: add | remove)
     Mutes { action: String, handle: String, #[arg(long)] dry_run: bool },
+    /// Dancing cat
+    Mania,
 }
 
 #[derive(Subcommand)]
@@ -263,6 +265,7 @@ async fn run() -> Result<()> {
     match &cli.command {
         Command::Init => return init_command(),
         Command::Config => return config_command(cli.json),
+        Command::Mania => return mania_command(),
         Command::Find { query, count } => {
             let tweets = db::Db::open_default()?.find(query, *count)?;
             output::print_tweets(&tweets, cli.json, cli.plain, "No matching tweets archived.");
@@ -331,6 +334,7 @@ async fn run() -> Result<()> {
         Command::Check
         | Command::Init
         | Command::Config
+        | Command::Mania
         | Command::Find { .. }
         | Command::Log { .. }
         | Command::Db { .. }
@@ -815,6 +819,42 @@ fn init_command() -> Result<()> {
     } else {
         println!("\nRun kicau whoami to check the cookies work.");
     }
+    Ok(())
+}
+
+/// Dancing cat. That is the whole feature.
+///
+/// Frames are rendered from the source video at build time and embedded, so this
+/// stays a single binary with nothing to install. Chars are ~2:1, so the square
+/// video is half as many rows as columns.
+fn mania_command() -> Result<()> {
+    use std::io::{IsTerminal, Write};
+
+    const FRAMES: &str = include_str!("mania.txt");
+    const FPS_DELAY: Duration = Duration::from_millis(83); // 12fps, the rate they were rendered at
+    const LOOPS: usize = 3;
+
+    let frames: Vec<&str> = FRAMES.split('\u{c}').collect();
+    let mut out = std::io::stdout().lock();
+
+    // Piped or redirected: one still frame, no escape codes to garble the pipe.
+    if !out.is_terminal() {
+        writeln!(out, "{}", frames[0])?;
+        return Ok(());
+    }
+
+    write!(out, "\x1b[2J")?;
+    for frame in frames.iter().cycle().take(frames.len() * LOOPS) {
+        write!(out, "\x1b[H")?;
+        for line in frame.lines() {
+            // Erase to end of line: frames are ragged, so a shorter line would
+            // otherwise leave the previous frame's tail on screen.
+            writeln!(out, "{line}\x1b[K")?;
+        }
+        out.flush()?;
+        std::thread::sleep(FPS_DELAY);
+    }
+    writeln!(out)?;
     Ok(())
 }
 
