@@ -104,6 +104,18 @@ enum Command {
         /// Tweet id or URL
         tweet: String,
     },
+    /// Fetch a live collection and persist it into the local SQLite store
+    Sync {
+        /// What to sync: bookmarks | tweets
+        what: String,
+        #[arg(short = 'n', long, default_value_t = 100)]
+        limit: u32,
+    },
+    /// Show local database stats
+    Db {
+        #[command(subcommand)]
+        action: DbAction,
+    },
     /// Scrape x.com for current GraphQL query ids and refresh the cache
     UpdateQueryIds,
     /// Full-text search the locally archived tweets
@@ -175,6 +187,12 @@ enum Command {
     Unfollow { handle: String, #[arg(long)] dry_run: bool },
 }
 
+#[derive(Subcommand)]
+enum DbAction {
+    /// Row counts and on-disk size
+    Stats,
+}
+
 struct Credentials {
     auth_token: String,
     ct0: String,
@@ -208,6 +226,21 @@ async fn run() -> Result<()> {
             output::print_tweets(&tweets, cli.json, cli.plain, "Nothing archived yet.");
             return Ok(());
         }
+        Command::Db { action: DbAction::Stats } => {
+            let s = db::Db::open_default()?.stats()?;
+            if cli.json {
+                println!(
+                    "{}",
+                    serde_json::json!({ "tweets": s.tweets, "profiles": s.profiles, "collections": s.collections, "bytes": s.bytes })
+                );
+            } else {
+                println!("tweets:      {}", s.tweets);
+                println!("profiles:    {}", s.profiles);
+                println!("collections: {}", s.collections);
+                println!("size:        {} KiB", s.bytes / 1024);
+            }
+            return Ok(());
+        }
         _ => {}
     }
 
@@ -219,7 +252,21 @@ async fn run() -> Result<()> {
     )?;
 
     match cli.command {
-        Command::Check | Command::Find { .. } | Command::Log { .. } => unreachable!("handled above"),
+        Command::Check | Command::Find { .. } | Command::Log { .. } | Command::Db { .. } => {
+            unreachable!("handled above")
+        }
+        Command::Sync { what, limit } => {
+            let user = client.current_user().await?;
+            let tweets = match what.as_str() {
+                "bookmarks" => client.bookmarks(limit).await?,
+                "tweets" => client.user_tweets(&user.username, limit).await?,
+                other => return Err(anyhow!("unknown sync target '{other}' (use: bookmarks | tweets)")),
+            };
+            let mut db = db::Db::open_default()?;
+            let saved = db.archive_collection(&tweets, &user.id, &what)?;
+            println!("✅ synced {saved} {what} into the local store");
+            Ok(())
+        }
         Command::Whoami => whoami(&client, &creds.source, cli.json, cli.plain).await,
         Command::Read { tweet } => {
             let id = extract::extract_tweet_id(&tweet);
