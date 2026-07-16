@@ -3,6 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use rusqlite::{params, Connection};
+use sha2::{Digest, Sha256};
 
 use crate::models::{Author, DmConversation, DmMessage, Profile, Tweet};
 
@@ -66,6 +67,7 @@ CREATE TABLE IF NOT EXISTS follow_edges (
 );
 CREATE TABLE IF NOT EXISTS profile_snapshots (
     profile_id text not null,
+    snapshot_hash text not null,
     observed_at text not null,
     handle text not null,
     display_name text not null,
@@ -73,7 +75,7 @@ CREATE TABLE IF NOT EXISTS profile_snapshots (
     followers_count integer not null default 0,
     following_count integer not null default 0,
     location text,
-    primary key (profile_id, observed_at)
+    primary key (profile_id, snapshot_hash)
 );
 CREATE TABLE IF NOT EXISTS dm_conversations (
     id text primary key,
@@ -124,6 +126,20 @@ impl Db {
     }
 
     fn init(conn: Connection) -> Result<Db> {
+        // profile_snapshots switched from a time key to a content-hash key; drop
+        // the old regenerable table so the new schema takes effect.
+        let old_snapshots: bool = conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_master
+                 WHERE type='table' AND name='profile_snapshots' AND sql NOT LIKE '%snapshot_hash%'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .map(|n| n > 0)
+            .unwrap_or(false);
+        if old_snapshots {
+            conn.execute("DROP TABLE profile_snapshots", [])?;
+        }
         conn.execute_batch(SCHEMA)?;
         Ok(Db { conn })
     }
@@ -187,12 +203,16 @@ impl Db {
     /// Upsert a profile and append a point-in-time snapshot of its metrics.
     pub fn save_profile(&mut self, p: &Profile) -> Result<()> {
         let now = now_secs().to_string();
+        // Snapshot identity is its content: re-saving an unchanged profile is a
+        // no-op, and a changed one records a new snapshot — regardless of timing.
+        let hash = snapshot_hash(p);
         let tx = self.conn.transaction()?;
         upsert_profile(&tx, p, &now)?;
         tx.execute(
-            "INSERT OR REPLACE INTO profile_snapshots(profile_id, observed_at, handle, display_name, bio, followers_count, following_count, location)
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            params![p.id, now, p.handle, p.name, p.bio, p.followers, p.following, p.location],
+            "INSERT INTO profile_snapshots(profile_id, snapshot_hash, observed_at, handle, display_name, bio, followers_count, following_count, location)
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+             ON CONFLICT(profile_id, snapshot_hash) DO NOTHING",
+            params![p.id, hash, now, p.handle, p.name, p.bio, p.followers, p.following, p.location],
         )?;
         tx.commit()?;
         Ok(())
@@ -417,6 +437,23 @@ fn json_to_val(v: &serde_json::Value) -> rusqlite::types::Value {
     }
 }
 
+/// Stable content fingerprint of a profile's snapshot-worthy fields.
+fn snapshot_hash(p: &Profile) -> String {
+    let mut h = Sha256::new();
+    for field in [
+        p.handle.as_str(),
+        p.name.as_str(),
+        p.bio.as_str(),
+        &p.followers.to_string(),
+        &p.following.to_string(),
+        p.location.as_deref().unwrap_or(""),
+    ] {
+        h.update(field.as_bytes());
+        h.update([0x1f]);
+    }
+    h.finalize().iter().take(8).map(|b| format!("{b:02x}")).collect()
+}
+
 fn now_secs() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
@@ -529,6 +566,30 @@ mod tests {
         assert_eq!(s.collections, 1);
         assert_eq!(restored.find("backup", 10).unwrap().len(), 1, "fts rebuilt on import");
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn save_profile_snapshots_only_on_change() {
+        let mut db = db();
+        let mut p = Profile {
+            id: "u1".into(),
+            handle: "alice".into(),
+            name: "Alice".into(),
+            bio: "hi".into(),
+            followers: 5,
+            following: 2,
+            location: None,
+            verified: false,
+        };
+        let count = |db: &Db| -> i64 {
+            db.conn.query_row("SELECT count(*) FROM profile_snapshots", [], |r| r.get(0)).unwrap()
+        };
+        db.save_profile(&p).unwrap();
+        db.save_profile(&p).unwrap(); // identical → no new snapshot
+        assert_eq!(count(&db), 1, "re-saving unchanged profile is idempotent");
+        p.followers = 6; // profile changed
+        db.save_profile(&p).unwrap();
+        assert_eq!(count(&db), 2, "a changed profile records a new snapshot");
     }
 
     #[test]
