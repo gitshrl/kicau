@@ -15,6 +15,24 @@ offline.
 
 ## Install
 
+Download the binary. No Rust, no build, no dependencies.
+
+```sh
+# Linux x86_64 (static, runs on any distro)
+curl -sL https://github.com/gitshrl/kicau/releases/latest/download/kicau-linux-x86_64.tar.gz | tar xz
+
+# macOS, Apple silicon
+curl -sL https://github.com/gitshrl/kicau/releases/latest/download/kicau-macos-arm64.tar.gz | tar xz
+
+# macOS, Intel
+curl -sL https://github.com/gitshrl/kicau/releases/latest/download/kicau-macos-x86_64.tar.gz | tar xz
+
+sudo mv kicau /usr/local/bin/
+kicau mania
+```
+
+With Rust already installed:
+
 ```sh
 cargo install --git https://github.com/gitshrl/kicau.git --locked
 
@@ -38,7 +56,7 @@ ct0 = "..."
 kicau resolves `auth_token` and `ct0` in this order:
 
 1. `--auth-token` / `--ct0` flags
-2. `KICAU_AUTH_TOKEN` / `KICAU_CT0`, or `AUTH_TOKEN` / `CT0` environment variables
+2. `KICAU_AUTH_TOKEN` / `KICAU_CT0` environment variables
 3. `~/.kicau/config.toml` `[credentials]`
 
 Check what resolved with `kicau check`.
@@ -47,6 +65,7 @@ Check what resolved with `kicau check`.
 
 ```sh
 kicau mania # show a cat dancing in ASCII
+kicau init # create the config and ask for your cookies
 kicau whoami
 kicau read 2074208949205881033 # id or full URL
 kicau search "rust async"

@@ -1,0 +1,66 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          # musl, so the Linux binary is static and runs on any distro rather
+          # than pinning whatever glibc the runner happens to ship.
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            name: kicau-linux-x86_64
+          - target: aarch64-apple-darwin
+            os: macos-14
+            name: kicau-macos-arm64
+          - target: x86_64-apple-darwin
+            os: macos-13
+            name: kicau-macos-x86_64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # rusqlite compiles SQLite from C source, so musl needs its own C compiler.
+      - name: install musl toolchain
+        if: endsWith(matrix.target, 'musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - run: cargo test --locked --target ${{ matrix.target }}
+
+      - run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: package
+        run: tar czf ${{ matrix.name }}.tar.gz -C target/${{ matrix.target }}/release kicau
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ matrix.name }}.tar.gz
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: checksums
+        run: sha256sum *.tar.gz > checksums.txt
+
+      - name: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --generate-notes *.tar.gz checksums.txt
