@@ -154,8 +154,9 @@ fn animation_key(
 
     let frame = &frames[usize::from(key_bytes[5] % 4)];
     let d = frame.get(9..)?;
-    // Parsed straight to f64: every one of these is a coordinate the maths below
-    // treats as a float anyway, and X's paths carry values past a byte.
+    // Parsed straight to f64 because every one is a coordinate the maths below
+    // treats as a float anyway. Note this accepts digit runs too long for an
+    // i64, which the old parse silently dropped; an SVG path never carries one.
     let arr: Vec<Vec<f64>> = d
         .split('C')
         .map(|seg| {
@@ -318,13 +319,19 @@ fn hex_digit(n: f64) -> char {
     }
 }
 
-/// The one place a float becomes an integer. X's algorithm truncates toward
-/// zero, which is exactly what `as` does; std has no checked f64→int conversion,
-/// so the lint is answered here once instead of at every call site.
+/// The one place a float becomes an integer, so the invariant is stated once.
+///
+/// Every caller hands over a value already inside 0..=255 and already whole:
+/// hex digits come from `.trunc()` on a value under 16, colours from a
+/// `.clamp(0.0, 255.0)` in `animate`. So no truncation or sign loss can happen
+/// here in practice, and `as` is exact.
+///
+/// That clamp is load-bearing. Remove it and this saturates instead of
+/// wrapping, silently rendering 256 as `ff` where X's own maths would not.
 #[expect(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
-    reason = "callers pass an already-truncated value in 0..=255"
+    reason = "std has no checked f64→int conversion; callers guarantee 0..=255 and whole"
 )]
 fn trunc_u8(x: f64) -> u8 {
     x as u8
