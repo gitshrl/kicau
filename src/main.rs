@@ -19,7 +19,7 @@ use client::TwitterClient;
 #[derive(Parser)]
 #[command(name = "kicau", version, about = "Cookie-based X/Twitter GraphQL CLI")]
 struct Cli {
-    /// Override `auth_token` cookie
+    /// Override auth_token cookie
     #[arg(long, global = true)]
     auth_token: Option<String>,
     /// Override ct0 cookie
@@ -34,7 +34,7 @@ struct Cli {
     /// Request timeout in milliseconds
     #[arg(long, global = true, default_value_t = 30000)]
     timeout: u64,
-    /// Skip archiving fetched tweets to the local `SQLite` database
+    /// Skip archiving fetched tweets to the local SQLite database
     #[arg(long, global = true)]
     no_db: bool,
 
@@ -111,7 +111,7 @@ enum Command {
         /// Tweet id or URL
         tweet: String,
     },
-    /// Fetch a live collection and persist it into the local `SQLite` store
+    /// Fetch a live collection and persist it into the local SQLite store
     Sync {
         /// What to sync: bookmarks | tweets
         what: String,
@@ -241,7 +241,7 @@ enum Command {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Upload a media file and print its `media_id`
+    /// Upload a media file and print its media_id
     Upload {
         /// Path to an image/gif/video
         file: String,

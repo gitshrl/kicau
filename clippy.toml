@@ -1,0 +1,4 @@
+# These words appear in doc comments that clap renders as CLI help text, so they
+# have to read as prose. Backticking them to satisfy doc_markdown would print the
+# backticks to users.
+doc-valid-idents = ["SQLite", "auth_token", "ct0", "media_id", ".."]
