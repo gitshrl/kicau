@@ -499,7 +499,7 @@ mod tests {
     fn archive_is_idempotent() {
         let mut db = db();
         let t = tweet("5", "u5", "dave", "first", "2026-07-06T10:00:00.000Z");
-        db.archive(&[t.clone()]).unwrap();
+        db.archive(std::slice::from_ref(&t)).unwrap();
         let mut updated = t;
         updated.text = "edited".into();
         db.archive(&[updated]).unwrap();
@@ -519,8 +519,7 @@ mod tests {
             "bookmarks",
         )
         .unwrap();
-        let dir = std::path::PathBuf::from(std::env::temp_dir())
-            .join(format!("kicau-backup-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("kicau-backup-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         src.export_backup(&dir).unwrap();
 
@@ -537,7 +536,7 @@ mod tests {
     fn archive_collection_records_membership_idempotently() {
         let mut db = db();
         let t = tweet("3", "u3", "carol", "saved", "2026-07-06T10:00:00.000Z");
-        assert_eq!(db.archive_collection(&[t.clone()], "acct1", "bookmarks").unwrap(), 1);
+        assert_eq!(db.archive_collection(std::slice::from_ref(&t), "acct1", "bookmarks").unwrap(), 1);
         // re-syncing the same tweet doesn't duplicate the collection row
         db.archive_collection(&[t], "acct1", "bookmarks").unwrap();
         let s = db.stats().unwrap();
