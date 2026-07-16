@@ -703,37 +703,117 @@ fn head(token: &str) -> String {
 
 /// A fresh `config.toml`: empty credentials plus the full query-id table (edit an
 /// id if X rotates it and a call starts 404ing).
-fn config_template() -> String {
-    let mut s = String::from("# kicau config\n\n[credentials]\nauth_token = \"\"\nct0 = \"\"\n\n[query_ids]\n");
+fn config_template(auth_token: &str, ct0: &str) -> String {
+    let mut s = format!(
+        "# kicau config\n\n[credentials]\nauth_token = \"{auth_token}\"\nct0 = \"{ct0}\"\n\n[query_ids]\n"
+    );
     for (op, id) in config::QUERY_IDS {
         s.push_str(&format!("{op} = \"{id}\"\n"));
     }
     s
 }
 
+/// Where the two cookies live in a browser.
+fn print_cookie_guidance() {
+    println!("kicau signs in with two of your own x.com session cookies.\n");
+    println!("  1. Sign in to x.com in your browser.");
+    println!("  2. Open developer tools (F12), then:");
+    println!("       Chrome / Edge   Application → Storage → Cookies → https://x.com");
+    println!("       Firefox         Storage → Cookies → https://x.com");
+    println!("       Safari          Develop → Show Web Inspector → Storage → Cookies");
+    println!("  3. Copy the value of the auth_token cookie, then the ct0 cookie.\n");
+    println!("Together they grant full access to your account — treat them like a");
+    println!("password. Press Enter to skip and fill the file in by hand.\n");
+}
+
+fn stty(arg: &str) -> bool {
+    std::process::Command::new("stty")
+        .arg(arg)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Read both cookies with terminal echo off, so a pasted secret does not stay on
+/// screen or in scrollback.
+fn prompt_credentials() -> Result<(String, String)> {
+    use std::io::{BufRead, Write};
+
+    let hidden = stty("-echo");
+    if !hidden {
+        println!("Terminal echo could not be turned off — pasted values will be visible.\n");
+    }
+    let read = |label: &str| -> Result<String> {
+        print!("{label}: ");
+        std::io::stdout().flush()?;
+        let mut line = String::new();
+        std::io::stdin().lock().read_line(&mut line)?;
+        if hidden {
+            println!();
+        }
+        Ok(line.trim().to_string())
+    };
+
+    let both = (|| Ok((read("auth_token")?, read("ct0")?)))();
+    if hidden {
+        stty("echo");
+    }
+    both
+}
+
+/// Cookie values are opaque tokens. Anything that would break out of a TOML
+/// string means a bad paste, and a malformed config only surfaces later as a
+/// confusing "missing credentials".
+fn check_cookie(label: &str, value: &str) -> Result<()> {
+    if value.contains(['"', '\\']) || value.chars().any(char::is_control) {
+        return Err(anyhow!(
+            "{label} contains unexpected characters — copy just the cookie value"
+        ));
+    }
+    Ok(())
+}
+
 /// Create `~/.kicau` and drop a `config.toml`. Idempotent — never overwrites an
 /// existing config.
 fn init_command() -> Result<()> {
+    use std::io::IsTerminal;
+
     let state = config::state_dir();
     std::fs::create_dir_all(&state)?;
-
     let config_file = config::config_toml_path();
-    let fresh = !config_file.exists();
-    if fresh {
-        std::fs::write(&config_file, config_template())?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&config_file, std::fs::Permissions::from_mode(0o600));
-        }
+
+    if config_file.exists() {
+        println!("✅ kicau initialized");
+        println!("   state:  {}", state.display());
+        println!("   config: {} (already present)", config_file.display());
+        return Ok(());
+    }
+
+    // Only ask when someone is there to answer; piped or scripted runs get the
+    // blank template instead of a hung prompt.
+    let (auth_token, ct0) = if std::io::stdin().is_terminal() {
+        print_cookie_guidance();
+        prompt_credentials()?
+    } else {
+        (String::new(), String::new())
+    };
+    check_cookie("auth_token", &auth_token)?;
+    check_cookie("ct0", &ct0)?;
+
+    std::fs::write(&config_file, config_template(&auth_token, &ct0))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&config_file, std::fs::Permissions::from_mode(0o600));
     }
 
     println!("✅ kicau initialized");
     println!("   state:  {}", state.display());
-    if fresh {
-        println!("   config: {} — fill in auth_token and ct0", config_file.display());
+    println!("   config: {}", config_file.display());
+    if auth_token.is_empty() || ct0.is_empty() {
+        println!("\nAdd auth_token and ct0 to that file, then run: kicau whoami");
     } else {
-        println!("   config: {} (already present)", config_file.display());
+        println!("\nRun kicau whoami to check the cookies work.");
     }
     Ok(())
 }
@@ -766,4 +846,33 @@ fn config_command(json: bool) -> Result<()> {
     row("config:", &config_file);
     row("database:", &db);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn template_embeds_cookies_and_parses_back() {
+        let toml = config_template("AUTH", "CT0");
+        assert!(toml.contains("auth_token = \"AUTH\""));
+        assert!(toml.contains("ct0 = \"CT0\""));
+        let parsed: toml::Value = toml::from_str(&toml).unwrap();
+        assert_eq!(parsed["credentials"]["ct0"].as_str(), Some("CT0"));
+        assert_eq!(parsed["query_ids"]["TweetDetail"].as_str(), config::QUERY_IDS[0].1.into());
+    }
+
+    #[test]
+    fn skipped_prompt_leaves_a_fillable_template() {
+        let parsed: toml::Value = toml::from_str(&config_template("", "")).unwrap();
+        assert_eq!(parsed["credentials"]["auth_token"].as_str(), Some(""));
+    }
+
+    #[test]
+    fn rejects_pastes_that_would_break_the_toml() {
+        assert!(check_cookie("ct0", "a1b2c3d4e5").is_ok());
+        assert!(check_cookie("ct0", "ab\"; evil = \"").is_err());
+        assert!(check_cookie("ct0", "ab\\c").is_err());
+        assert!(check_cookie("ct0", "ab\ncd").is_err());
+    }
 }

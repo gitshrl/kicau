@@ -17,8 +17,9 @@ cargo build --release
 
 ## Authentication
 
-Run `kicau init` once to create `~/.kicau/config.toml`, fill in your two session
-cookies, then `kicau config` to see where everything lives.
+Run `kicau init` once. It explains where to find your two x.com session cookies,
+prompts for them, and writes `~/.kicau/config.toml`. Skip the prompts with Enter
+to fill the file in by hand. `kicau config` shows where everything lives.
 
 ```toml
 # ~/.kicau/config.toml
@@ -66,7 +67,7 @@ kicau find "loops"                        # offline, over your local archive
 (profile snapshot) · `db stats` · `backup export|import` · `import` (X data export)
 
 **Setup / maintenance**
-`init` (scaffold config dirs + cookie template) · `config` (show paths and
+`init` (create config, prompt for cookies) · `config` (show paths and
 credential source) · `whoami` · `check` · `update-query-ids`
 
 Run `kicau <command> --help` for options. Every write supports `--dry-run`.
