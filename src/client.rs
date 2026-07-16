@@ -338,12 +338,22 @@ impl TwitterClient {
         self.action("DeleteBookmark", serde_json::json!({ "tweet_id": tweet_id })).await
     }
     pub async fn follow(&self, handle: &str) -> Result<()> {
-        let user = self.user(handle).await?;
-        self.friendship("create", &user.id).await
+        self.rest_user_action("friendships/create", handle).await
     }
     pub async fn unfollow(&self, handle: &str) -> Result<()> {
-        let user = self.user(handle).await?;
-        self.friendship("destroy", &user.id).await
+        self.rest_user_action("friendships/destroy", handle).await
+    }
+    pub async fn block(&self, handle: &str) -> Result<()> {
+        self.rest_user_action("blocks/create", handle).await
+    }
+    pub async fn unblock(&self, handle: &str) -> Result<()> {
+        self.rest_user_action("blocks/destroy", handle).await
+    }
+    pub async fn mute(&self, handle: &str) -> Result<()> {
+        self.rest_user_action("mutes/users/create", handle).await
+    }
+    pub async fn unmute(&self, handle: &str) -> Result<()> {
+        self.rest_user_action("mutes/users/destroy", handle).await
     }
 
     /// GraphQL action mutation: POST with no features, success = no error.
@@ -352,14 +362,16 @@ impl TwitterClient {
         Ok(())
     }
 
-    /// follow/unfollow via the REST v1.1 friendships endpoint (form-encoded).
-    async fn friendship(&self, action: &str, user_id: &str) -> Result<()> {
-        let url = format!("https://x.com/i/api/1.1/friendships/{action}.json");
+    /// REST v1.1 user action (follow/block/mute create+destroy): resolve the
+    /// handle to an id, then form-POST to the given endpoint path.
+    async fn rest_user_action(&self, path: &str, handle: &str) -> Result<()> {
+        let user = self.user(handle).await?;
+        let url = format!("https://x.com/i/api/1.1/{path}.json");
         let resp = self
             .http
             .post(&url)
             .headers(self.form_headers()?)
-            .form(&[("user_id", user_id), ("skip_status", "true")])
+            .form(&[("user_id", user.id.as_str()), ("skip_status", "true")])
             .send()
             .await?;
         let status = resp.status();

@@ -199,6 +199,10 @@ enum Command {
     Follow { handle: String, #[arg(long)] dry_run: bool },
     /// Unfollow a user
     Unfollow { handle: String, #[arg(long)] dry_run: bool },
+    /// Block or unblock a user (action: add | remove)
+    Blocks { action: String, handle: String, #[arg(long)] dry_run: bool },
+    /// Mute or unmute a user (action: add | remove)
+    Mutes { action: String, handle: String, #[arg(long)] dry_run: bool },
 }
 
 #[derive(Subcommand)]
@@ -466,6 +470,12 @@ async fn run() -> Result<()> {
             println!("✅ unfollowed @{}", handle.trim_start_matches('@'));
             Ok(())
         }
+        Command::Blocks { action, handle, dry_run } => {
+            moderate(&client, "block", &action, &handle, dry_run).await
+        }
+        Command::Mutes { action, handle, dry_run } => {
+            moderate(&client, "mute", &action, &handle, dry_run).await
+        }
         Command::UpdateQueryIds => {
             let ids = client
                 .refresh_query_ids(&["TweetDetail", "SearchTimeline", "CreateTweet"])
@@ -479,6 +489,34 @@ async fn run() -> Result<()> {
             Ok(())
         }
     }
+}
+
+/// block/unblock or mute/unmute a user by add|remove action, with dry-run.
+async fn moderate(client: &TwitterClient, kind: &str, action: &str, handle: &str, dry_run: bool) -> Result<()> {
+    let h = handle.trim_start_matches('@');
+    let add = match action {
+        "add" => true,
+        "remove" => false,
+        other => return Err(anyhow!("unknown action '{other}' (use: add | remove)")),
+    };
+    let (verb, past) = match (kind, add) {
+        ("block", true) => ("block", "blocked"),
+        ("block", false) => ("unblock", "unblocked"),
+        ("mute", true) => ("mute", "muted"),
+        _ => ("unmute", "unmuted"),
+    };
+    if dry_run {
+        println!("📝 [dry-run] would {verb} @{h}");
+        return Ok(());
+    }
+    match (kind, add) {
+        ("block", true) => client.block(handle).await?,
+        ("block", false) => client.unblock(handle).await?,
+        ("mute", true) => client.mute(handle).await?,
+        _ => client.unmute(handle).await?,
+    }
+    println!("✅ {past} @{h}");
+    Ok(())
 }
 
 /// Upload each media file, pairing it with alt text by position, and return the
