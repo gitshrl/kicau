@@ -82,9 +82,7 @@ pub fn resolve_credentials(flag_auth: Option<String>, flag_ct0: Option<String>) 
         return Ok(Credentials { auth_token, ct0, source: "CLI flags".into() });
     }
 
-    if let (Some(auth_token), Some(ct0)) =
-        (first_env(&["KICAU_AUTH_TOKEN", "AUTH_TOKEN"]), first_env(&["KICAU_CT0", "CT0"]))
-    {
+    if let (Some(auth_token), Some(ct0)) = (env("KICAU_AUTH_TOKEN"), env("KICAU_CT0")) {
         return Ok(Credentials { auth_token, ct0, source: "environment variables".into() });
     }
 
@@ -96,13 +94,13 @@ pub fn resolve_credentials(flag_auth: Option<String>, flag_ct0: Option<String>) 
     }
 
     Err(anyhow!(
-        "missing credentials — set [credentials] in {}, or pass --auth-token/--ct0 or AUTH_TOKEN/CT0",
+        "missing credentials: set [credentials] in {}, or pass --auth-token/--ct0, or set KICAU_AUTH_TOKEN/KICAU_CT0",
         config_toml_path().display()
     ))
 }
 
-fn first_env(keys: &[&str]) -> Option<String> {
-    keys.iter().find_map(|k| nonempty(std::env::var(k).ok()))
+fn env(key: &str) -> Option<String> {
+    nonempty(std::env::var(key).ok())
 }
 
 fn nonempty(v: Option<String>) -> Option<String> {
