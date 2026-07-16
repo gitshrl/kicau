@@ -45,8 +45,7 @@ pub fn candidates(operation: &str) -> Vec<String> {
 }
 
 fn config_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_default();
-    PathBuf::from(home).join(".config/kicau/query-ids.json")
+    crate::config::config_dir().join("query-ids.json")
 }
 
 /// Write the compiled defaults to the config file on first run so the ids are
@@ -109,8 +108,7 @@ fn now() -> u64 {
 }
 
 fn cache_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_default();
-    PathBuf::from(home).join(".config/kicau/query-ids-cache.json")
+    crate::config::config_dir().join("query-ids-cache.json")
 }
 
 fn read_cache() -> Option<Snapshot> {

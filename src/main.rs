@@ -1,4 +1,5 @@
 mod client;
+mod config;
 mod db;
 mod extract;
 mod models;
@@ -239,12 +240,6 @@ enum BackupAction {
     Import { dir: String },
 }
 
-struct Credentials {
-    auth_token: String,
-    ct0: String,
-    source: String,
-}
-
 #[tokio::main]
 async fn main() {
     if let Err(e) = run().await {
@@ -319,7 +314,7 @@ async fn run() -> Result<()> {
         _ => {}
     }
 
-    let creds = resolve_credentials(cli.auth_token.clone(), cli.ct0.clone())?;
+    let creds = config::resolve_credentials(cli.auth_token.clone(), cli.ct0.clone())?;
     let client = TwitterClient::new(
         creds.auth_token,
         creds.ct0,
@@ -667,7 +662,7 @@ async fn check(
     let ok = |e: &str| if plain { format!("[ok] {e}") } else { format!("✅ {e}") };
     let bad = |e: &str| if plain { format!("[missing] {e}") } else { format!("❌ {e}") };
 
-    let creds = match resolve_credentials(flag_auth, flag_ct0) {
+    let creds = match config::resolve_credentials(flag_auth, flag_ct0) {
         Ok(creds) => creds,
         Err(e) => {
             println!("{}", bad("no credentials found"));
@@ -696,104 +691,4 @@ async fn check(
 
 fn head(token: &str) -> String {
     token.chars().take(10).collect()
-}
-
-/// Precedence: CLI flags → env vars → cookie file → config file.
-fn resolve_credentials(flag_auth: Option<String>, flag_ct0: Option<String>) -> Result<Credentials> {
-    if let (Some(auth_token), Some(ct0)) = (nonempty(flag_auth), nonempty(flag_ct0)) {
-        return Ok(Credentials { auth_token, ct0, source: "CLI flags".into() });
-    }
-
-    let auth_keys = ["KICAU_AUTH_TOKEN", "AUTH_TOKEN"];
-    let ct0_keys = ["KICAU_CT0", "CT0"];
-    if let (Some(auth_token), Some(ct0)) = (first_env(&auth_keys), first_env(&ct0_keys)) {
-        return Ok(Credentials { auth_token, ct0, source: "environment variables".into() });
-    }
-
-    let home = std::env::var("HOME").unwrap_or_default();
-    let cookie_file = format!("{home}/.kicau/cookies.env");
-    if let Some(creds) = from_env_file(&cookie_file) {
-        return Ok(creds);
-    }
-
-    let config = format!("{home}/.config/kicau/config.json");
-    if let Some(creds) = from_config_json(&config) {
-        return Ok(creds);
-    }
-
-    Err(anyhow!(
-        "missing credentials — provide --auth-token/--ct0, AUTH_TOKEN/CT0 env vars, {cookie_file}, or {config}"
-    ))
-}
-
-fn from_env_file(path: &str) -> Option<Credentials> {
-    let content = std::fs::read_to_string(path).ok()?;
-    let mut vars = std::collections::HashMap::new();
-    for line in content.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let line = line.strip_prefix("export ").unwrap_or(line);
-        let Some((key, val)) = line.split_once('=') else { continue };
-        let val = val.trim().trim_matches(|c| c == '"' || c == '\'').to_string();
-        if let Some(val) = nonempty(Some(val)) {
-            vars.insert(key.trim().to_string(), val);
-        }
-    }
-    // resolve by key priority, not line order
-    let pick = |keys: &[&str]| keys.iter().find_map(|k| vars.get(*k).cloned());
-    Some(Credentials {
-        auth_token: pick(&["KICAU_AUTH_TOKEN", "AUTH_TOKEN"])?,
-        ct0: pick(&["KICAU_CT0", "CT0"])?,
-        source: path.to_string(),
-    })
-}
-
-fn from_config_json(path: &str) -> Option<Credentials> {
-    let content = std::fs::read_to_string(path).ok()?;
-    let v: serde_json::Value = serde_json::from_str(&content).ok()?;
-    let auth_token = nonempty(v.get("authToken").and_then(|x| x.as_str()).map(str::to_string))?;
-    let ct0 = nonempty(v.get("ct0").and_then(|x| x.as_str()).map(str::to_string))?;
-    Some(Credentials { auth_token, ct0, source: path.to_string() })
-}
-
-fn first_env(keys: &[&str]) -> Option<String> {
-    keys.iter().find_map(|k| nonempty(std::env::var(k).ok()))
-}
-
-fn nonempty(v: Option<String>) -> Option<String> {
-    v.map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::io::Write;
-
-    #[test]
-    fn parses_cookie_env_file_by_key_priority() {
-        let mut f = tempfile("parse");
-        writeln!(f.0, "AUTH_TOKEN=abc123\nKICAU_CT0=kk\nCT0=\"def456\"\n# comment").unwrap();
-        let creds = from_env_file(&f.1).expect("should parse");
-        assert_eq!(creds.auth_token, "abc123");
-        assert_eq!(creds.ct0, "kk"); // KICAU_CT0 wins over CT0; quotes would strip
-    }
-
-    #[test]
-    fn missing_key_yields_none() {
-        let mut f = tempfile("missing");
-        writeln!(f.0, "AUTH_TOKEN=only").unwrap();
-        assert!(from_env_file(&f.1).is_none());
-    }
-
-    fn tempfile(tag: &str) -> (std::fs::File, String) {
-        let path = format!(
-            "{}/kicau-test-{}-{}.env",
-            std::env::temp_dir().display(),
-            std::process::id(),
-            tag
-        );
-        (std::fs::File::create(&path).unwrap(), path)
-    }
 }

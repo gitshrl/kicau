@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
@@ -114,8 +114,7 @@ pub struct Db {
 
 impl Db {
     pub fn open_default() -> Result<Db> {
-        let home = std::env::var("HOME").unwrap_or_default();
-        let dir = PathBuf::from(home).join(".kicau");
+        let dir = crate::config::state_dir();
         std::fs::create_dir_all(&dir)?;
         Self::open(dir.join("kicau.sqlite"))
     }
