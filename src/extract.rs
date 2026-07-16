@@ -14,7 +14,10 @@ mod tests {
 
     #[test]
     fn bare_id_passes_through() {
-        assert_eq!(extract_tweet_id("2074208949205881033"), "2074208949205881033");
+        assert_eq!(
+            extract_tweet_id("2074208949205881033"),
+            "2074208949205881033"
+        );
     }
 
     #[test]

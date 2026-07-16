@@ -68,7 +68,11 @@ mod tests {
         Tweet {
             id: "1".into(),
             text: "hi".into(),
-            author: Author { id: "42".into(), username: "u".into(), name: "n".into() },
+            author: Author {
+                id: "42".into(),
+                username: "u".into(),
+                name: "n".into(),
+            },
             created_at: Some("Mon Jul 06 19:08:45 +0000 2026".into()),
             reply_count: Some(3),
             retweet_count: Some(2),

@@ -3,7 +3,10 @@ use crate::models::{DmConversation, DmMessage, Profile, Tweet};
 /// DM conversation list.
 pub fn print_dm_conversations(convs: &[DmConversation], json: bool) {
     if json {
-        println!("{}", serde_json::to_string_pretty(convs).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(convs).unwrap_or_default()
+        );
         return;
     }
     if convs.is_empty() {
@@ -42,15 +45,29 @@ pub fn print_profile(p: &Profile, json: bool, plain: bool) {
         println!("{}", p.bio);
     }
     let people = tok(plain, "👥", "");
-    let loc = p.location.as_deref().map(|l| format!("  📍 {l}")).unwrap_or_default();
-    let loc = if plain { loc.replace("📍 ", "location: ") } else { loc };
-    println!("{people} {} followers · {} following{loc}", p.followers, p.following);
+    let loc = p
+        .location
+        .as_deref()
+        .map(|l| format!("  📍 {l}"))
+        .unwrap_or_default();
+    let loc = if plain {
+        loc.replace("📍 ", "location: ")
+    } else {
+        loc
+    };
+    println!(
+        "{people} {} followers · {} following{loc}",
+        p.followers, p.following
+    );
 }
 
 /// Single-tweet view (read): text, date, engagement counts.
 pub fn print_tweet(tweet: &Tweet, json: bool, plain: bool) {
     if json {
-        println!("{}", serde_json::to_string_pretty(tweet).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(tweet).unwrap_or_default()
+        );
         return;
     }
     println!("@{} ({}):", tweet.author.username, tweet.author.name);
@@ -78,7 +95,10 @@ pub fn print_tweet(tweet: &Tweet, json: bool, plain: bool) {
 /// Compact profile-list view (follow graph).
 pub fn print_profiles(profiles: &[Profile], json: bool, empty_message: &str) {
     if json {
-        println!("{}", serde_json::to_string_pretty(profiles).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(profiles).unwrap_or_default()
+        );
         return;
     }
     if profiles.is_empty() {
@@ -93,7 +113,10 @@ pub fn print_profiles(profiles: &[Profile], json: bool, empty_message: &str) {
 /// Tweet-list view (search/mentions/replies/thread): blocks separated by a rule.
 pub fn print_tweets(tweets: &[Tweet], json: bool, plain: bool, empty_message: &str) {
     if json {
-        println!("{}", serde_json::to_string_pretty(tweets).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(tweets).unwrap_or_default()
+        );
         return;
     }
     if tweets.is_empty() {
@@ -117,9 +140,5 @@ pub fn print_tweets(tweets: &[Tweet], json: bool, plain: bool, empty_message: &s
 }
 
 fn tok<'a>(plain: bool, emoji: &'a str, label: &'a str) -> &'a str {
-    if plain {
-        label
-    } else {
-        emoji
-    }
+    if plain { label } else { emoji }
 }

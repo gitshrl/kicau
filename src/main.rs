@@ -8,9 +8,10 @@ mod parse;
 mod query;
 mod transaction;
 
+use std::fmt::Write as _;
 use std::time::Duration;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use clap::{Parser, Subcommand};
 
 use client::TwitterClient;
@@ -18,7 +19,7 @@ use client::TwitterClient;
 #[derive(Parser)]
 #[command(name = "kicau", version, about = "Cookie-based X/Twitter GraphQL CLI")]
 struct Cli {
-    /// Override auth_token cookie
+    /// Override `auth_token` cookie
     #[arg(long, global = true)]
     auth_token: Option<String>,
     /// Override ct0 cookie
@@ -33,7 +34,7 @@ struct Cli {
     /// Request timeout in milliseconds
     #[arg(long, global = true, default_value_t = 30000)]
     timeout: u64,
-    /// Skip archiving fetched tweets to the local SQLite database
+    /// Skip archiving fetched tweets to the local `SQLite` database
     #[arg(long, global = true)]
     no_db: bool,
 
@@ -110,7 +111,7 @@ enum Command {
         /// Tweet id or URL
         tweet: String,
     },
-    /// Fetch a live collection and persist it into the local SQLite store
+    /// Fetch a live collection and persist it into the local `SQLite` store
     Sync {
         /// What to sync: bookmarks | tweets
         what: String,
@@ -199,20 +200,48 @@ enum Command {
         count: u32,
     },
     /// Delete one of your own tweets
-    Delete { tweet: String, #[arg(long)] dry_run: bool },
+    Delete {
+        tweet: String,
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Like a tweet
-    Like { tweet: String, #[arg(long)] dry_run: bool },
+    Like {
+        tweet: String,
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Remove a like from a tweet
-    Unlike { tweet: String, #[arg(long)] dry_run: bool },
+    Unlike {
+        tweet: String,
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Retweet a tweet
-    Retweet { tweet: String, #[arg(long)] dry_run: bool },
+    Retweet {
+        tweet: String,
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Remove a retweet
-    Unretweet { tweet: String, #[arg(long)] dry_run: bool },
+    Unretweet {
+        tweet: String,
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Bookmark a tweet
-    Bookmark { tweet: String, #[arg(long)] dry_run: bool },
+    Bookmark {
+        tweet: String,
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Remove a bookmark
-    Unbookmark { tweet: String, #[arg(long)] dry_run: bool },
-    /// Upload a media file and print its media_id
+    Unbookmark {
+        tweet: String,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Upload a media file and print its `media_id`
     Upload {
         /// Path to an image/gif/video
         file: String,
@@ -221,13 +250,31 @@ enum Command {
         alt: Option<String>,
     },
     /// Follow a user
-    Follow { handle: String, #[arg(long)] dry_run: bool },
+    Follow {
+        handle: String,
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Unfollow a user
-    Unfollow { handle: String, #[arg(long)] dry_run: bool },
+    Unfollow {
+        handle: String,
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Block or unblock a user (action: add | remove)
-    Blocks { action: String, handle: String, #[arg(long)] dry_run: bool },
+    Blocks {
+        action: String,
+        handle: String,
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Mute or unmute a user (action: add | remove)
-    Mutes { action: String, handle: String, #[arg(long)] dry_run: bool },
+    Mutes {
+        action: String,
+        handle: String,
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Dancing cat
     Mania,
 }
@@ -254,6 +301,10 @@ async fn main() {
     }
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "a dispatch table: one flat arm per command, long by nature rather than complex"
+)]
 async fn run() -> Result<()> {
     let cli = Cli::parse();
 
@@ -264,7 +315,10 @@ async fn run() -> Result<()> {
     // These commands need no credentials.
     match &cli.command {
         Command::Init => return init_command(),
-        Command::Config => return config_command(cli.json),
+        Command::Config => {
+            config_command(cli.json);
+            return Ok(());
+        }
         Command::Mania => return mania_command(),
         Command::Find { query, count } => {
             let tweets = db::Db::open_default()?.find(query, *count)?;
@@ -303,7 +357,9 @@ async fn run() -> Result<()> {
             }
             return Ok(());
         }
-        Command::Db { action: DbAction::Stats } => {
+        Command::Db {
+            action: DbAction::Stats,
+        } => {
             let s = db::Db::open_default()?.stats()?;
             if cli.json {
                 println!(
@@ -345,23 +401,39 @@ async fn run() -> Result<()> {
             let tweets = match what.as_str() {
                 "bookmarks" => client.bookmarks(limit).await?,
                 "tweets" => client.user_tweets(&user.username, limit).await?,
-                other => return Err(anyhow!("unknown sync target '{other}' (use: bookmarks | tweets)")),
+                other => {
+                    return Err(anyhow!(
+                        "unknown sync target '{other}' (use: bookmarks | tweets)"
+                    ));
+                }
             };
             let mut db = db::Db::open_default()?;
             let saved = db.archive_collection(&tweets, &user.id, &what)?;
             println!("✅ synced {saved} {what} into the local store");
             Ok(())
         }
-        Command::Graph { direction, handle, count } => {
+        Command::Graph {
+            direction,
+            handle,
+            count,
+        } => {
             let profiles = match direction.as_str() {
                 "following" => client.following(&handle, count).await?,
                 "followers" => client.followers(&handle, count).await?,
-                other => return Err(anyhow!("unknown direction '{other}' (use: following | followers)")),
+                other => {
+                    return Err(anyhow!(
+                        "unknown direction '{other}' (use: following | followers)"
+                    ));
+                }
             };
             output::print_profiles(&profiles, cli.json, "No accounts found.");
             if !cli.no_db {
                 let account = client.user(&handle).await?;
-                let n = db::Db::open_default()?.save_follow_edges(&account.id, &direction, &profiles)?;
+                let n = db::Db::open_default()?.save_follow_edges(
+                    &account.id,
+                    &direction,
+                    &profiles,
+                )?;
                 if !cli.json {
                     eprintln!("📥 saved {n} {direction} edges");
                 }
@@ -393,7 +465,11 @@ async fn run() -> Result<()> {
                 .find(|c| c.id == conversation || c.title == needle || c.title.contains(&needle))
                 .map(|c| c.id.clone())
                 .unwrap_or(conversation);
-            let thread: Vec<_> = msgs.iter().filter(|m| m.conversation_id == target).cloned().collect();
+            let thread: Vec<_> = msgs
+                .iter()
+                .filter(|m| m.conversation_id == target)
+                .cloned()
+                .collect();
             output::print_dm_messages(&thread, cli.json);
             if !cli.no_db {
                 db::Db::open_default()?.save_dms(&convs, &msgs)?;
@@ -421,7 +497,12 @@ async fn run() -> Result<()> {
             archive(&tweets, cli.no_db);
             Ok(())
         }
-        Command::Tweet { text, media, alt, dry_run } => {
+        Command::Tweet {
+            text,
+            media,
+            alt,
+            dry_run,
+        } => {
             if dry_run {
                 println!("📝 [dry-run] would tweet: {text}");
                 if !media.is_empty() {
@@ -435,7 +516,13 @@ async fn run() -> Result<()> {
             println!("🔗 https://x.com/i/status/{id}");
             Ok(())
         }
-        Command::Reply { tweet, text, media, alt, dry_run } => {
+        Command::Reply {
+            tweet,
+            text,
+            media,
+            alt,
+            dry_run,
+        } => {
             let id = extract::extract_tweet_id(&tweet);
             if dry_run {
                 println!("📝 [dry-run] would reply to {id}: {text}");
@@ -495,49 +582,70 @@ async fn run() -> Result<()> {
         }
         Command::Delete { tweet, dry_run } => {
             let id = extract::extract_tweet_id(&tweet);
-            if dry_run { println!("📝 [dry-run] would delete {id}"); return Ok(()); }
+            if dry_run {
+                println!("📝 [dry-run] would delete {id}");
+                return Ok(());
+            }
             client.delete_tweet(&id).await?;
             println!("🗑️ deleted {id}");
             Ok(())
         }
         Command::Like { tweet, dry_run } => {
             let id = extract::extract_tweet_id(&tweet);
-            if dry_run { println!("📝 [dry-run] would like {id}"); return Ok(()); }
+            if dry_run {
+                println!("📝 [dry-run] would like {id}");
+                return Ok(());
+            }
             client.like(&id).await?;
             println!("❤️ liked {id}");
             Ok(())
         }
         Command::Unlike { tweet, dry_run } => {
             let id = extract::extract_tweet_id(&tweet);
-            if dry_run { println!("📝 [dry-run] would unlike {id}"); return Ok(()); }
+            if dry_run {
+                println!("📝 [dry-run] would unlike {id}");
+                return Ok(());
+            }
             client.unlike(&id).await?;
             println!("✅ unliked {id}");
             Ok(())
         }
         Command::Retweet { tweet, dry_run } => {
             let id = extract::extract_tweet_id(&tweet);
-            if dry_run { println!("📝 [dry-run] would retweet {id}"); return Ok(()); }
+            if dry_run {
+                println!("📝 [dry-run] would retweet {id}");
+                return Ok(());
+            }
             client.retweet(&id).await?;
             println!("🔁 retweeted {id}");
             Ok(())
         }
         Command::Unretweet { tweet, dry_run } => {
             let id = extract::extract_tweet_id(&tweet);
-            if dry_run { println!("📝 [dry-run] would unretweet {id}"); return Ok(()); }
+            if dry_run {
+                println!("📝 [dry-run] would unretweet {id}");
+                return Ok(());
+            }
             client.unretweet(&id).await?;
             println!("✅ unretweeted {id}");
             Ok(())
         }
         Command::Bookmark { tweet, dry_run } => {
             let id = extract::extract_tweet_id(&tweet);
-            if dry_run { println!("📝 [dry-run] would bookmark {id}"); return Ok(()); }
+            if dry_run {
+                println!("📝 [dry-run] would bookmark {id}");
+                return Ok(());
+            }
             client.bookmark(&id).await?;
             println!("🔖 bookmarked {id}");
             Ok(())
         }
         Command::Unbookmark { tweet, dry_run } => {
             let id = extract::extract_tweet_id(&tweet);
-            if dry_run { println!("📝 [dry-run] would unbookmark {id}"); return Ok(()); }
+            if dry_run {
+                println!("📝 [dry-run] would unbookmark {id}");
+                return Ok(());
+            }
             client.unbookmark(&id).await?;
             println!("✅ unbookmarked {id}");
             Ok(())
@@ -551,7 +659,10 @@ async fn run() -> Result<()> {
         }
         Command::Follow { handle, dry_run } => {
             if dry_run {
-                println!("📝 [dry-run] would follow @{}", handle.trim_start_matches('@'));
+                println!(
+                    "📝 [dry-run] would follow @{}",
+                    handle.trim_start_matches('@')
+                );
                 return Ok(());
             }
             client.follow(&handle).await?;
@@ -560,19 +671,26 @@ async fn run() -> Result<()> {
         }
         Command::Unfollow { handle, dry_run } => {
             if dry_run {
-                println!("📝 [dry-run] would unfollow @{}", handle.trim_start_matches('@'));
+                println!(
+                    "📝 [dry-run] would unfollow @{}",
+                    handle.trim_start_matches('@')
+                );
                 return Ok(());
             }
             client.unfollow(&handle).await?;
             println!("✅ unfollowed @{}", handle.trim_start_matches('@'));
             Ok(())
         }
-        Command::Blocks { action, handle, dry_run } => {
-            moderate(&client, "block", &action, &handle, dry_run).await
-        }
-        Command::Mutes { action, handle, dry_run } => {
-            moderate(&client, "mute", &action, &handle, dry_run).await
-        }
+        Command::Blocks {
+            action,
+            handle,
+            dry_run,
+        } => moderate(&client, "block", &action, &handle, dry_run).await,
+        Command::Mutes {
+            action,
+            handle,
+            dry_run,
+        } => moderate(&client, "mute", &action, &handle, dry_run).await,
         Command::UpdateQueryIds => {
             let ids = client
                 .refresh_query_ids(&["TweetDetail", "SearchTimeline", "CreateTweet"])
@@ -589,7 +707,13 @@ async fn run() -> Result<()> {
 }
 
 /// block/unblock or mute/unmute a user by add|remove action, with dry-run.
-async fn moderate(client: &TwitterClient, kind: &str, action: &str, handle: &str, dry_run: bool) -> Result<()> {
+async fn moderate(
+    client: &TwitterClient,
+    kind: &str,
+    action: &str,
+    handle: &str,
+    dry_run: bool,
+) -> Result<()> {
     let h = handle.trim_start_matches('@');
     let add = match action {
         "add" => true,
@@ -617,12 +741,18 @@ async fn moderate(client: &TwitterClient, kind: &str, action: &str, handle: &str
 }
 
 /// Upload each media file, pairing it with alt text by position, and return the
-/// resulting media_ids in order.
-async fn upload_all(client: &TwitterClient, media: &[String], alt: &[String]) -> Result<Vec<String>> {
+/// resulting `media_ids` in order.
+async fn upload_all(
+    client: &TwitterClient,
+    media: &[String],
+    alt: &[String],
+) -> Result<Vec<String>> {
     let mut ids = Vec::with_capacity(media.len());
     for (i, path) in media.iter().enumerate() {
         let alt_text = alt.get(i).map(String::as_str).filter(|s| !s.is_empty());
-        let id = client.upload_media(std::path::Path::new(path), alt_text).await?;
+        let id = client
+            .upload_media(std::path::Path::new(path), alt_text)
+            .await?;
         ids.push(id);
     }
     Ok(ids)
@@ -671,8 +801,20 @@ async fn check(
     timeout: u64,
     plain: bool,
 ) -> Result<()> {
-    let ok = |e: &str| if plain { format!("[ok] {e}") } else { format!("✅ {e}") };
-    let bad = |e: &str| if plain { format!("[missing] {e}") } else { format!("❌ {e}") };
+    let ok = |e: &str| {
+        if plain {
+            format!("[ok] {e}")
+        } else {
+            format!("✅ {e}")
+        }
+    };
+    let bad = |e: &str| {
+        if plain {
+            format!("[missing] {e}")
+        } else {
+            format!("❌ {e}")
+        }
+    };
 
     let creds = match config::resolve_credentials(flag_auth, flag_ct0) {
         Ok(creds) => creds,
@@ -682,17 +824,23 @@ async fn check(
         }
     };
 
-    println!("{}", ok(&format!("auth_token: {}…", head(&creds.auth_token))));
+    println!(
+        "{}",
+        ok(&format!("auth_token: {}…", head(&creds.auth_token)))
+    );
     println!("{}", ok(&format!("ct0: {}…", head(&creds.ct0))));
-    println!("{} {}", if plain { "source:" } else { "📍 Source:" }, creds.source);
+    println!(
+        "{} {}",
+        if plain { "source:" } else { "📍 Source:" },
+        creds.source
+    );
 
-    let client = TwitterClient::new(
-        creds.auth_token,
-        creds.ct0,
-        Duration::from_millis(timeout),
-    )?;
+    let client = TwitterClient::new(creds.auth_token, creds.ct0, Duration::from_millis(timeout))?;
     match client.current_user().await {
-        Ok(user) => println!("{}", ok(&format!("valid — logged in as @{}", user.username))),
+        Ok(user) => println!(
+            "{}",
+            ok(&format!("valid — logged in as @{}", user.username))
+        ),
         Err(e) => println!(
             "{}",
             bad(&format!("credentials present but rejected by X: {e}"))
@@ -712,7 +860,7 @@ fn config_template(auth_token: &str, ct0: &str) -> String {
         "# kicau config\n\n[credentials]\nauth_token = \"{auth_token}\"\nct0 = \"{ct0}\"\n\n[query_ids]\n"
     );
     for (op, id) in config::QUERY_IDS {
-        s.push_str(&format!("{op} = \"{id}\"\n"));
+        let _ = writeln!(s, "{op} = \"{id}\"");
     }
     s
 }
@@ -734,8 +882,7 @@ fn stty(arg: &str) -> bool {
     std::process::Command::new("stty")
         .arg(arg)
         .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+        .is_ok_and(|s| s.success())
 }
 
 /// Read both cookies with terminal echo off, so a pasted secret does not stay on
@@ -859,13 +1006,12 @@ fn mania_command() -> Result<()> {
 }
 
 /// Show where things live and where credentials resolve from.
-fn config_command(json: bool) -> Result<()> {
+fn config_command(json: bool) {
     let state = config::state_dir();
     let config_file = config::config_toml_path();
     let db = state.join("kicau.sqlite");
     let source = config::resolve_credentials(None, None)
-        .map(|c| c.source)
-        .unwrap_or_else(|_| "not configured".to_string());
+        .map_or_else(|_| "not configured".to_string(), |c| c.source);
 
     if json {
         println!(
@@ -876,7 +1022,7 @@ fn config_command(json: bool) -> Result<()> {
                 "database": db.display().to_string(),
             })
         );
-        return Ok(());
+        return;
     }
     let row = |label: &str, path: &std::path::Path| {
         let mark = if path.exists() { "✓" } else { "–" };
@@ -885,7 +1031,6 @@ fn config_command(json: bool) -> Result<()> {
     println!("credentials:   {source}");
     row("config:", &config_file);
     row("database:", &db);
-    Ok(())
 }
 
 #[cfg(test)]
@@ -899,7 +1044,10 @@ mod tests {
         assert!(toml.contains("ct0 = \"CT0\""));
         let parsed: toml::Value = toml::from_str(&toml).unwrap();
         assert_eq!(parsed["credentials"]["ct0"].as_str(), Some("CT0"));
-        assert_eq!(parsed["query_ids"]["TweetDetail"].as_str(), config::QUERY_IDS[0].1.into());
+        assert_eq!(
+            parsed["query_ids"]["TweetDetail"].as_str(),
+            config::QUERY_IDS[0].1.into()
+        );
     }
 
     #[test]

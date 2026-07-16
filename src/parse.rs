@@ -18,11 +18,15 @@ pub fn parse_archive_account(js: &str) -> Option<Author> {
 
 /// The `tweets.js` from an X data export → owned tweets attributed to `author`.
 pub fn parse_archive_tweets(js: &str, author: &Author) -> Vec<Tweet> {
-    let Some(arr) = strip_js_wrapper(js) else { return Vec::new() };
+    let Some(arr) = strip_js_wrapper(js) else {
+        return Vec::new();
+    };
     let mut tweets = Vec::new();
     for entry in as_array(&arr) {
         let t = &entry["tweet"];
-        let Some(id) = str_at(t, "/id_str") else { continue };
+        let Some(id) = str_at(t, "/id_str") else {
+            continue;
+        };
         tweets.push(Tweet {
             id,
             text: str_at(t, "/full_text").unwrap_or_default(),
@@ -70,7 +74,11 @@ pub fn parse_dm_inbox(data: &Value, my_id: &str) -> (Vec<DmConversation>, Vec<Dm
             conversations.push(DmConversation {
                 id: id.clone(),
                 kind: str_at(conv, "/type").unwrap_or_default(),
-                title: if others.is_empty() { id.clone() } else { others.join(", ") },
+                title: if others.is_empty() {
+                    id.clone()
+                } else {
+                    others.join(", ")
+                },
             });
         }
     }
@@ -97,7 +105,9 @@ pub fn parse_dm_inbox(data: &Value, my_id: &str) -> (Vec<DmConversation>, Vec<Dm
 }
 
 fn json_millis(v: &Value) -> i64 {
-    v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok())).unwrap_or(0)
+    v.as_i64()
+        .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+        .unwrap_or(0)
 }
 
 /// Unix milliseconds → ISO 8601 UTC, no external date dependency (Hinnant's
@@ -120,14 +130,14 @@ pub fn unix_millis_to_iso(ms: i64) -> String {
     format!("{year:04}-{month:02}-{day:02}T{h:02}:{mi:02}:{s:02}.000Z")
 }
 
-/// Map a UserByScreenName `data.user.result` into a Profile. X is migrating
+/// Map a `UserByScreenName` `data.user.result` into a Profile. X is migrating
 /// user fields from legacy.* to core.*, so both are tried.
 pub fn parse_user(result: &Value) -> Option<Profile> {
     if result["__typename"] == "UserUnavailable" {
         return None;
     }
-    let handle = str_at(result, "/legacy/screen_name")
-        .or_else(|| str_at(result, "/core/screen_name"))?;
+    let handle =
+        str_at(result, "/legacy/screen_name").or_else(|| str_at(result, "/core/screen_name"))?;
     let name = str_at(result, "/legacy/name")
         .or_else(|| str_at(result, "/core/name"))
         .unwrap_or_else(|| handle.clone());
@@ -136,11 +146,23 @@ pub fn parse_user(result: &Value) -> Option<Profile> {
         handle,
         name,
         bio: str_at(result, "/legacy/description").unwrap_or_default(),
-        followers: result.pointer("/legacy/followers_count").and_then(Value::as_u64).unwrap_or(0),
-        following: result.pointer("/legacy/friends_count").and_then(Value::as_u64).unwrap_or(0),
+        followers: result
+            .pointer("/legacy/followers_count")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        following: result
+            .pointer("/legacy/friends_count")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
         location: str_at(result, "/legacy/location").filter(|s| !s.is_empty()),
-        verified: result.pointer("/is_blue_verified").and_then(Value::as_bool).unwrap_or(false)
-            || result.pointer("/legacy/verified").and_then(Value::as_bool).unwrap_or(false),
+        verified: result
+            .pointer("/is_blue_verified")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+            || result
+                .pointer("/legacy/verified")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
     })
 }
 
@@ -157,7 +179,8 @@ pub fn map_tweet_result(result: &Value) -> Option<Tweet> {
     let legacy = result.get("legacy")?;
     let user = result.pointer("/core/user_results/result")?;
     // X is migrating author fields from legacy.* to core.*; try both.
-    let username = str_at(user, "/legacy/screen_name").or_else(|| str_at(user, "/core/screen_name"))?;
+    let username =
+        str_at(user, "/legacy/screen_name").or_else(|| str_at(user, "/core/screen_name"))?;
     let name = str_at(user, "/legacy/name")
         .or_else(|| str_at(user, "/core/name"))
         .unwrap_or_else(|| username.clone());
@@ -173,7 +196,11 @@ pub fn map_tweet_result(result: &Value) -> Option<Tweet> {
     Some(Tweet {
         id: str_at(result, "/rest_id").unwrap_or_default(),
         text,
-        author: Author { id: author_id, username, name },
+        author: Author {
+            id: author_id,
+            username,
+            name,
+        },
         created_at: str_at(legacy, "/created_at").map(|d| to_iso8601(&d)),
         reply_count: legacy["reply_count"].as_u64(),
         retweet_count: legacy["retweet_count"].as_u64(),
@@ -200,7 +227,7 @@ pub fn users_from_instructions(instructions: &Value) -> Vec<Profile> {
     users
 }
 
-/// Walk timeline `instructions` (TweetDetail or SearchTimeline shape) collecting
+/// Walk timeline `instructions` (`TweetDetail` or `SearchTimeline` shape) collecting
 /// every tweet. Handles both direct `itemContent` entries and the nested
 /// `items[]` of conversationthread modules.
 pub fn tweets_from_instructions(instructions: &Value) -> Vec<Tweet> {
@@ -227,7 +254,7 @@ pub fn tweets_from_instructions(instructions: &Value) -> Vec<Tweet> {
 }
 
 /// Title + body for an article tweet. `plain_text` is the whole article, sent
-/// only when the request carries the `withArticlePlainText` toggle; preview_text
+/// only when the request carries the `withArticlePlainText` toggle; `preview_text`
 /// is the blurb X falls back to when it withholds the body.
 fn article_text(result: &Value) -> Option<String> {
     let article = result.pointer("/article/article_results/result")?;
@@ -242,7 +269,9 @@ fn article_text(result: &Value) -> Option<String> {
 }
 
 fn str_at(v: &Value, pointer: &str) -> Option<String> {
-    v.pointer(pointer).and_then(Value::as_str).map(str::to_string)
+    v.pointer(pointer)
+        .and_then(Value::as_str)
+        .map(str::to_string)
 }
 
 /// Normalize X's wire date `Mon Jul 06 19:08:45 +0000 2026` to ISO 8601 so every
@@ -254,17 +283,31 @@ pub fn to_iso8601(x: &str) -> String {
         return x.to_string();
     }
     let month = match p[1] {
-        "Jan" => "01", "Feb" => "02", "Mar" => "03", "Apr" => "04",
-        "May" => "05", "Jun" => "06", "Jul" => "07", "Aug" => "08",
-        "Sep" => "09", "Oct" => "10", "Nov" => "11", "Dec" => "12",
+        "Jan" => "01",
+        "Feb" => "02",
+        "Mar" => "03",
+        "Apr" => "04",
+        "May" => "05",
+        "Jun" => "06",
+        "Jul" => "07",
+        "Aug" => "08",
+        "Sep" => "09",
+        "Oct" => "10",
+        "Nov" => "11",
+        "Dec" => "12",
         _ => return x.to_string(),
     };
     // p = [dow, mon, dd, hh:mm:ss, tz, yyyy]
-    format!("{year}-{month}-{day}T{time}.000Z", year = p[5], day = p[2], time = p[3])
+    format!(
+        "{year}-{month}-{day}T{time}.000Z",
+        year = p[5],
+        day = p[2],
+        time = p[3]
+    )
 }
 
 fn as_array(v: &Value) -> &[Value] {
-    v.as_array().map(Vec::as_slice).unwrap_or(&[])
+    v.as_array().map_or(&[][..], Vec::as_slice)
 }
 
 #[cfg(test)]
@@ -334,12 +377,18 @@ mod tests {
         assert_eq!(tweets[0].conversation_id.as_deref(), Some("1"));
         assert_eq!(tweets[0].in_reply_to_status_id, None);
         // created_at is normalized to ISO 8601 at parse time
-        assert_eq!(tweets[0].created_at.as_deref(), Some("2026-07-06T19:08:45.000Z"));
+        assert_eq!(
+            tweets[0].created_at.as_deref(),
+            Some("2026-07-06T19:08:45.000Z")
+        );
     }
 
     #[test]
     fn iso_conversion_is_sortable_and_lenient() {
-        assert_eq!(to_iso8601("Mon Jul 06 19:08:45 +0000 2026"), "2026-07-06T19:08:45.000Z");
+        assert_eq!(
+            to_iso8601("Mon Jul 06 19:08:45 +0000 2026"),
+            "2026-07-06T19:08:45.000Z"
+        );
         assert_eq!(to_iso8601("garbage"), "garbage");
     }
 
@@ -352,7 +401,7 @@ mod tests {
                 "screen_name": "elonmusk",
                 "name": "Elon Musk",
                 "description": "tech",
-                "followers_count": 200000000_u64,
+                "followers_count": 200_000_000_u64,
                 "friends_count": 500,
                 "location": "Mars"
             }
@@ -361,7 +410,7 @@ mod tests {
         assert_eq!(p.id, "44196397");
         assert_eq!(p.handle, "elonmusk");
         assert_eq!(p.name, "Elon Musk");
-        assert_eq!(p.followers, 200000000);
+        assert_eq!(p.followers, 200_000_000);
         assert_eq!(p.location.as_deref(), Some("Mars"));
         assert!(p.verified);
     }
@@ -390,13 +439,19 @@ mod tests {
         assert_eq!(tweets[0].text, "archived tweet");
         assert_eq!(tweets[0].author.username, "me");
         assert_eq!(tweets[0].like_count, Some(9));
-        assert_eq!(tweets[0].created_at.as_deref(), Some("2018-10-10T20:19:24.000Z"));
+        assert_eq!(
+            tweets[0].created_at.as_deref(),
+            Some("2018-10-10T20:19:24.000Z")
+        );
     }
 
     #[test]
     fn unix_millis_to_iso_known_values() {
         assert_eq!(unix_millis_to_iso(0), "1970-01-01T00:00:00.000Z");
-        assert_eq!(unix_millis_to_iso(1_000_000_000_000), "2001-09-09T01:46:40.000Z");
+        assert_eq!(
+            unix_millis_to_iso(1_000_000_000_000),
+            "2001-09-09T01:46:40.000Z"
+        );
     }
 
     #[test]
@@ -412,13 +467,16 @@ mod tests {
                 },
                 "entries": [
                     { "message": { "id": "m2", "conversation_id": "c1", "message_data": { "sender_id": "them", "text": "hi back", "time": "1000000001000" } } },
-                    { "message": { "id": "m1", "conversation_id": "c1", "message_data": { "sender_id": "me", "text": "hi", "time": 1000000000000_i64 } } }
+                    { "message": { "id": "m1", "conversation_id": "c1", "message_data": { "sender_id": "me", "text": "hi", "time": 1_000_000_000_000_i64 } } }
                 ]
             }
         });
         let (convs, msgs) = parse_dm_inbox(&data, "me");
         assert_eq!(convs.len(), 1);
-        assert_eq!(convs[0].title, "@alice", "one-to-one names the other participant");
+        assert_eq!(
+            convs[0].title, "@alice",
+            "one-to-one names the other participant"
+        );
         assert_eq!(msgs.len(), 2);
         assert_eq!(msgs[0].id, "m1", "sorted oldest first");
         assert_eq!(msgs[0].sender_handle, "me");

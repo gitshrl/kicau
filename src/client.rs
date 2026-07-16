@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, InvalidHeaderValue};
 use serde_json::Value;
 
@@ -102,7 +102,10 @@ impl TwitterClient {
 
     fn headers(&self) -> std::result::Result<HeaderMap, InvalidHeaderValue> {
         let mut headers = self.base_headers()?;
-        headers.insert(HeaderName::from_static("content-type"), HeaderValue::from_static("application/json"));
+        headers.insert(
+            HeaderName::from_static("content-type"),
+            HeaderValue::from_static("application/json"),
+        );
         Ok(headers)
     }
 
@@ -119,7 +122,10 @@ impl TwitterClient {
             ("x-twitter-auth-type", "OAuth2Session".to_string()),
             ("x-twitter-active-user", "yes".to_string()),
             ("x-twitter-client-language", "en".to_string()),
-            ("cookie", format!("auth_token={}; ct0={}", self.auth_token, self.ct0)),
+            (
+                "cookie",
+                format!("auth_token={}; ct0={}", self.auth_token, self.ct0),
+            ),
             ("user-agent", self.user_agent.clone()),
             ("origin", "https://x.com".to_string()),
             ("referer", "https://x.com/".to_string()),
@@ -144,8 +150,11 @@ impl TwitterClient {
         // Ordered candidates (user pin → baked → fresh cache); applies to reads
         // and writes alike.
         for query_id in &query::candidates(operation) {
-            match self.graphql_call_resilient(query_id, operation, &variables, &features, call).await {
-                Err(GqlError::Http { status: 404, .. }) => continue,
+            match self
+                .graphql_call_resilient(query_id, operation, &variables, &features, call)
+                .await
+            {
+                Err(GqlError::Http { status: 404, .. }) => {}
                 Err(e) => return Err(friendly(e)),
                 Ok(value) => return Ok(value),
             }
@@ -153,14 +162,14 @@ impl TwitterClient {
 
         // Every known id rotated out — scrape current ids and retry once.
         query::force_refresh(&self.http, &[operation]).await?;
-        let query_id = query::resolve(operation).await;
+        let query_id = query::resolve(operation);
         self.graphql_call_resilient(&query_id, operation, &variables, &features, call)
             .await
             .map_err(friendly)
     }
 
-    /// graphql_call, retried once on a transient server-side error (e.g. X's
-    /// DeadlineExceeded). Reads only — a retried write could double-post.
+    /// `graphql_call`, retried once on a transient server-side error (e.g. X's
+    /// `DeadlineExceeded`). Reads only — a retried write could double-post.
     async fn graphql_call_resilient(
         &self,
         query_id: &str,
@@ -169,11 +178,13 @@ impl TwitterClient {
         features: &Value,
         call: Call,
     ) -> std::result::Result<Value, GqlError> {
-        match self.graphql_call(query_id, operation, variables, features, call).await {
-            Err(GqlError::Api(msg))
-                if !matches!(call, Call::Write) && is_transient(&msg) =>
-            {
-                self.graphql_call(query_id, operation, variables, features, call).await
+        match self
+            .graphql_call(query_id, operation, variables, features, call)
+            .await
+        {
+            Err(GqlError::Api(msg)) if !matches!(call, Call::Write) && is_transient(&msg) => {
+                self.graphql_call(query_id, operation, variables, features, call)
+                    .await
             }
             other => other,
         }
@@ -241,31 +252,30 @@ impl TwitterClient {
             });
         }
         let json: Value = serde_json::from_str(&text)?;
-        if let Some(errors) = json.get("errors").and_then(Value::as_array) {
-            if !errors.is_empty() {
-                let msg = errors
-                    .iter()
-                    .filter_map(|e| e.get("message").and_then(Value::as_str))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                return Err(GqlError::Api(msg));
-            }
+        if let Some(errors) = json.get("errors").and_then(Value::as_array)
+            && !errors.is_empty()
+        {
+            let msg = errors
+                .iter()
+                .filter_map(|e| e.get("message").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(GqlError::Api(msg));
         }
         Ok(json.get("data").cloned().unwrap_or(Value::Null))
     }
 
-    /// Fetch a single tweet by id via TweetDetail.
+    /// Fetch a single tweet by id via `TweetDetail`.
     pub async fn get_tweet(&self, tweet_id: &str) -> Result<Tweet> {
         let data = self.tweet_detail(tweet_id).await?;
-        let instructions =
-            &data["threaded_conversation_with_injections_v2"]["instructions"];
+        let instructions = &data["threaded_conversation_with_injections_v2"]["instructions"];
         parse::tweets_from_instructions(instructions)
             .into_iter()
             .find(|t| t.id == tweet_id)
             .ok_or_else(|| anyhow!("tweet not found in response"))
     }
 
-    /// Search latest tweets matching a query via SearchTimeline.
+    /// Search latest tweets matching a query via `SearchTimeline`.
     pub async fn search(&self, query: &str, count: u32) -> Result<Vec<Tweet>> {
         let variables = serde_json::json!({
             "rawQuery": query,
@@ -297,7 +307,9 @@ impl TwitterClient {
             "count": count,
             "includePromotedContent": false,
         });
-        let data = self.fetch_graphql(operation, variables, read_features(), Call::Read).await?;
+        let data = self
+            .fetch_graphql(operation, variables, read_features(), Call::Read)
+            .await?;
         let instructions = data
             .pointer("/user/result/timeline/timeline/instructions")
             .cloned()
@@ -305,18 +317,21 @@ impl TwitterClient {
         Ok(parse::users_from_instructions(&instructions))
     }
 
-    /// A profile by handle via UserByScreenName.
+    /// A profile by handle via `UserByScreenName`.
     pub async fn user(&self, handle: &str) -> Result<Profile> {
         let handle = handle.trim_start_matches('@');
         let variables = serde_json::json!({
             "screen_name": handle,
             "withSafetyModeUserFields": true,
         });
-        let data = self.fetch_graphql("UserByScreenName", variables, user_features(), Call::Read).await?;
-        parse::parse_user(&data["user"]["result"]).ok_or_else(|| anyhow!("user @{handle} not found"))
+        let data = self
+            .fetch_graphql("UserByScreenName", variables, user_features(), Call::Read)
+            .await?;
+        parse::parse_user(&data["user"]["result"])
+            .ok_or_else(|| anyhow!("user @{handle} not found"))
     }
 
-    /// A user's own tweets: resolve the handle to a rest_id, then UserTweets.
+    /// A user's own tweets: resolve the handle to a `rest_id`, then `UserTweets`.
     pub async fn user_tweets(&self, handle: &str, count: u32) -> Result<Vec<Tweet>> {
         let user = self.user(handle).await?;
         let variables = serde_json::json!({
@@ -326,7 +341,13 @@ impl TwitterClient {
             "withQuickPromoteEligibilityTweetFields": true,
             "withVoice": true,
         });
-        self.timeline("UserTweets", variables, read_features(), "/user/result/timeline/timeline/instructions").await
+        self.timeline(
+            "UserTweets",
+            variables,
+            read_features(),
+            "/user/result/timeline/timeline/instructions",
+        )
+        .await
     }
 
     /// The account's chronological home timeline.
@@ -338,7 +359,13 @@ impl TwitterClient {
             "requestContext": "launch",
             "withCommunity": true,
         });
-        self.timeline("HomeLatestTimeline", variables, read_features(), "/home/home_timeline_urt/instructions").await
+        self.timeline(
+            "HomeLatestTimeline",
+            variables,
+            read_features(),
+            "/home/home_timeline_urt/instructions",
+        )
+        .await
     }
 
     /// The account's bookmarks.
@@ -350,43 +377,88 @@ impl TwitterClient {
             "withReactionsMetadata": false,
             "withReactionsPerspective": false,
         });
-        self.timeline("Bookmarks", variables, bookmarks_features(), "/bookmark_timeline_v2/timeline/instructions").await
+        self.timeline(
+            "Bookmarks",
+            variables,
+            bookmarks_features(),
+            "/bookmark_timeline_v2/timeline/instructions",
+        )
+        .await
     }
 
     /// A list's latest tweets.
     pub async fn list_tweets(&self, list_id: &str, count: u32) -> Result<Vec<Tweet>> {
         let variables = serde_json::json!({ "listId": list_id, "count": count });
-        self.timeline("ListLatestTweetsTimeline", variables, read_features(), "/list/tweets_timeline/timeline/instructions").await
+        self.timeline(
+            "ListLatestTweetsTimeline",
+            variables,
+            read_features(),
+            "/list/tweets_timeline/timeline/instructions",
+        )
+        .await
     }
 
     /// Shared read-timeline path: GraphQL GET, then parse tweets at `pointer`.
-    async fn timeline(&self, operation: &str, variables: Value, features: Value, pointer: &str) -> Result<Vec<Tweet>> {
-        let data = self.fetch_graphql(operation, variables, features, Call::Read).await?;
+    async fn timeline(
+        &self,
+        operation: &str,
+        variables: Value,
+        features: Value,
+        pointer: &str,
+    ) -> Result<Vec<Tweet>> {
+        let data = self
+            .fetch_graphql(operation, variables, features, Call::Read)
+            .await?;
         let instructions = data.pointer(pointer).cloned().unwrap_or(Value::Null);
         Ok(parse::tweets_from_instructions(&instructions))
     }
 
     /// Delete one of your own tweets.
     pub async fn delete_tweet(&self, tweet_id: &str) -> Result<()> {
-        self.action("DeleteTweet", serde_json::json!({ "tweet_id": tweet_id, "dark_request": false })).await
+        self.action(
+            "DeleteTweet",
+            serde_json::json!({ "tweet_id": tweet_id, "dark_request": false }),
+        )
+        .await
     }
     pub async fn like(&self, tweet_id: &str) -> Result<()> {
-        self.action("FavoriteTweet", serde_json::json!({ "tweet_id": tweet_id })).await
+        self.action("FavoriteTweet", serde_json::json!({ "tweet_id": tweet_id }))
+            .await
     }
     pub async fn unlike(&self, tweet_id: &str) -> Result<()> {
-        self.action("UnfavoriteTweet", serde_json::json!({ "tweet_id": tweet_id })).await
+        self.action(
+            "UnfavoriteTweet",
+            serde_json::json!({ "tweet_id": tweet_id }),
+        )
+        .await
     }
     pub async fn retweet(&self, tweet_id: &str) -> Result<()> {
-        self.action("CreateRetweet", serde_json::json!({ "tweet_id": tweet_id, "dark_request": false })).await
+        self.action(
+            "CreateRetweet",
+            serde_json::json!({ "tweet_id": tweet_id, "dark_request": false }),
+        )
+        .await
     }
     pub async fn unretweet(&self, tweet_id: &str) -> Result<()> {
-        self.action("DeleteRetweet", serde_json::json!({ "source_tweet_id": tweet_id, "dark_request": false })).await
+        self.action(
+            "DeleteRetweet",
+            serde_json::json!({ "source_tweet_id": tweet_id, "dark_request": false }),
+        )
+        .await
     }
     pub async fn bookmark(&self, tweet_id: &str) -> Result<()> {
-        self.action("CreateBookmark", serde_json::json!({ "tweet_id": tweet_id })).await
+        self.action(
+            "CreateBookmark",
+            serde_json::json!({ "tweet_id": tweet_id }),
+        )
+        .await
     }
     pub async fn unbookmark(&self, tweet_id: &str) -> Result<()> {
-        self.action("DeleteBookmark", serde_json::json!({ "tweet_id": tweet_id })).await
+        self.action(
+            "DeleteBookmark",
+            serde_json::json!({ "tweet_id": tweet_id }),
+        )
+        .await
     }
     pub async fn follow(&self, handle: &str) -> Result<()> {
         self.rest_user_action("friendships/create", handle).await
@@ -409,7 +481,8 @@ impl TwitterClient {
 
     /// GraphQL action mutation: POST with no features, success = no error.
     async fn action(&self, operation: &str, variables: Value) -> Result<()> {
-        self.fetch_graphql(operation, variables, Value::Null, Call::Write).await?;
+        self.fetch_graphql(operation, variables, Value::Null, Call::Write)
+            .await?;
         Ok(())
     }
 
@@ -428,7 +501,11 @@ impl TwitterClient {
         let status = resp.status();
         let text = resp.text().await?;
         if !status.is_success() {
-            return Err(anyhow!("HTTP {}: {}", status.as_u16(), truncate(&text, 200)));
+            return Err(anyhow!(
+                "HTTP {}: {}",
+                status.as_u16(),
+                truncate(&text, 200)
+            ));
         }
         Ok(())
     }
@@ -449,16 +526,21 @@ impl TwitterClient {
         let status = resp.status();
         let text = resp.text().await?;
         if !status.is_success() {
-            return Err(anyhow!("HTTP {}: {}", status.as_u16(), truncate(&text, 200)));
+            return Err(anyhow!(
+                "HTTP {}: {}",
+                status.as_u16(),
+                truncate(&text, 200)
+            ));
         }
         let data: Value = serde_json::from_str(&text)?;
         Ok(parse::parse_dm_inbox(&data, &me.id))
     }
 
     /// Chunked media upload (INIT → APPEND → FINALIZE → STATUS), returning the
-    /// media_id. Attaches alt text for images when provided.
+    /// `media_id`. Attaches alt text for images when provided.
     pub async fn upload_media(&self, path: &std::path::Path, alt: Option<&str>) -> Result<String> {
-        let bytes = std::fs::read(path).map_err(|e| anyhow!("cannot read {}: {e}", path.display()))?;
+        let bytes =
+            std::fs::read(path).map_err(|e| anyhow!("cannot read {}: {e}", path.display()))?;
         let mime = mime_for_path(path)?;
 
         let init = self
@@ -483,34 +565,58 @@ impl TwitterClient {
                 .text("media_id", media_id.clone())
                 .text("segment_index", index.to_string())
                 .part("media", part);
-            let resp = self.http.post(UPLOAD_URL).headers(self.form_headers()?).multipart(form).send().await?;
+            let resp = self
+                .http
+                .post(UPLOAD_URL)
+                .headers(self.form_headers()?)
+                .multipart(form)
+                .send()
+                .await?;
             if !resp.status().is_success() {
                 let status = resp.status().as_u16();
                 let body = resp.text().await.unwrap_or_default();
-                return Err(anyhow!("upload APPEND HTTP {status}: {}", truncate(&body, 200)));
+                return Err(anyhow!(
+                    "upload APPEND HTTP {status}: {}",
+                    truncate(&body, 200)
+                ));
             }
         }
 
-        let fin = self.upload_form(&[("command", "FINALIZE"), ("media_id", &media_id)]).await?;
-        let processing = fin.pointer("/processing_info/state").and_then(Value::as_str);
+        let fin = self
+            .upload_form(&[("command", "FINALIZE"), ("media_id", &media_id)])
+            .await?;
+        let processing = fin
+            .pointer("/processing_info/state")
+            .and_then(Value::as_str);
         if matches!(processing, Some(s) if s != "succeeded") {
             self.await_media_processing(&media_id).await?;
         }
 
-        if let Some(text) = alt {
-            if mime.starts_with("image/") && !text.is_empty() {
-                self.set_media_alt(&media_id, text).await?;
-            }
+        if let Some(text) = alt
+            && mime.starts_with("image/")
+            && !text.is_empty()
+        {
+            self.set_media_alt(&media_id, text).await?;
         }
         Ok(media_id)
     }
 
     async fn upload_form(&self, params: &[(&str, &str)]) -> Result<Value> {
-        let resp = self.http.post(UPLOAD_URL).headers(self.form_headers()?).form(params).send().await?;
+        let resp = self
+            .http
+            .post(UPLOAD_URL)
+            .headers(self.form_headers()?)
+            .form(params)
+            .send()
+            .await?;
         let status = resp.status();
         let text = resp.text().await?;
         if !status.is_success() {
-            return Err(anyhow!("upload HTTP {}: {}", status.as_u16(), truncate(&text, 200)));
+            return Err(anyhow!(
+                "upload HTTP {}: {}",
+                status.as_u16(),
+                truncate(&text, 200)
+            ));
         }
         Ok(serde_json::from_str(&text).unwrap_or(Value::Null))
     }
@@ -529,7 +635,11 @@ impl TwitterClient {
                 Some("succeeded") | None => return Ok(()),
                 Some("failed") => return Err(anyhow!("media processing failed")),
                 _ => {
-                    let secs = v.pointer("/processing_info/check_after_secs").and_then(Value::as_u64).unwrap_or(2).max(1);
+                    let secs = v
+                        .pointer("/processing_info/check_after_secs")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(2)
+                        .max(1);
                     tokio::time::sleep(Duration::from_secs(secs)).await;
                 }
             }
@@ -539,7 +649,13 @@ impl TwitterClient {
 
     async fn set_media_alt(&self, media_id: &str, text: &str) -> Result<()> {
         let body = serde_json::json!({ "media_id": media_id, "alt_text": { "text": text } });
-        let resp = self.http.post(MEDIA_METADATA_URL).headers(self.headers()?).json(&body).send().await?;
+        let resp = self
+            .http
+            .post(MEDIA_METADATA_URL)
+            .headers(self.headers()?)
+            .json(&body)
+            .send()
+            .await?;
         if !resp.status().is_success() {
             let status = resp.status().as_u16();
             let b = resp.text().await.unwrap_or_default();
@@ -559,8 +675,7 @@ impl TwitterClient {
     /// Replies to a tweet: conversation tweets whose parent is this id.
     pub async fn get_replies(&self, tweet_id: &str) -> Result<Vec<Tweet>> {
         let data = self.tweet_detail(tweet_id).await?;
-        let instructions =
-            &data["threaded_conversation_with_injections_v2"]["instructions"];
+        let instructions = &data["threaded_conversation_with_injections_v2"]["instructions"];
         Ok(parse::tweets_from_instructions(instructions)
             .into_iter()
             .filter(|t| t.in_reply_to_status_id.as_deref() == Some(tweet_id))
@@ -570,8 +685,7 @@ impl TwitterClient {
     /// Full conversation thread for a tweet, ordered oldest first.
     pub async fn get_thread(&self, tweet_id: &str) -> Result<Vec<Tweet>> {
         let data = self.tweet_detail(tweet_id).await?;
-        let instructions =
-            &data["threaded_conversation_with_injections_v2"]["instructions"];
+        let instructions = &data["threaded_conversation_with_injections_v2"]["instructions"];
         let tweets = parse::tweets_from_instructions(instructions);
         let root = tweets
             .iter()
@@ -588,12 +702,19 @@ impl TwitterClient {
 
     /// Post a tweet, returning its new id.
     pub async fn post_tweet(&self, text: &str, media_ids: &[String]) -> Result<String> {
-        self.create_tweet(create_tweet_variables(text, None, media_ids)).await
+        self.create_tweet(create_tweet_variables(text, None, media_ids))
+            .await
     }
 
     /// Reply to a tweet, returning the new reply's id.
-    pub async fn post_reply(&self, text: &str, reply_to: &str, media_ids: &[String]) -> Result<String> {
-        self.create_tweet(create_tweet_variables(text, Some(reply_to), media_ids)).await
+    pub async fn post_reply(
+        &self,
+        text: &str,
+        reply_to: &str,
+        media_ids: &[String],
+    ) -> Result<String> {
+        self.create_tweet(create_tweet_variables(text, Some(reply_to), media_ids))
+            .await
     }
 
     async fn create_tweet(&self, variables: Value) -> Result<String> {
@@ -617,7 +738,8 @@ impl TwitterClient {
             "withBirdwatchNotes": true,
             "withVoice": true,
         });
-        self.fetch_graphql("TweetDetail", variables, read_features(), Call::Read).await
+        self.fetch_graphql("TweetDetail", variables, read_features(), Call::Read)
+            .await
     }
 
     /// Account behind the current cookies. The authenticated settings page is the
@@ -652,7 +774,10 @@ impl TwitterClient {
 
     async fn current_user_from_settings_page(&self) -> Result<Option<CurrentUser>> {
         let cookie = format!("auth_token={}; ct0={}", self.auth_token, self.ct0);
-        for page in ["https://x.com/settings/account", "https://twitter.com/settings/account"] {
+        for page in [
+            "https://x.com/settings/account",
+            "https://twitter.com/settings/account",
+        ] {
             let resp = self
                 .http
                 .get(page)
@@ -682,7 +807,11 @@ impl TwitterClient {
         let status = resp.status();
         let text = resp.text().await?;
         if !status.is_success() {
-            return Err(anyhow!("HTTP {}: {}", status.as_u16(), truncate(&text, 200)));
+            return Err(anyhow!(
+                "HTTP {}: {}",
+                status.as_u16(),
+                truncate(&text, 200)
+            ));
         }
         let d: Value = serde_json::from_str(&text)?;
 
@@ -736,7 +865,9 @@ fn is_transient(message: &str) -> bool {
 fn friendly(err: GqlError) -> anyhow::Error {
     if let GqlError::Http { status, .. } = &err {
         match status {
-            401 | 403 => return anyhow!("unauthorized — auth_token/ct0 invalid or expired ({status})"),
+            401 | 403 => {
+                return anyhow!("unauthorized — auth_token/ct0 invalid or expired ({status})");
+            }
             429 => return anyhow!("rate limited by X — wait and retry (429)"),
             _ => {}
         }
@@ -744,7 +875,7 @@ fn friendly(err: GqlError) -> anyhow::Error {
     err.into()
 }
 
-/// CreateTweet variables for a tweet, or a reply when `reply_to` is set.
+/// `CreateTweet` variables for a tweet, or a reply when `reply_to` is set.
 pub fn create_tweet_variables(text: &str, reply_to: Option<&str>, media_ids: &[String]) -> Value {
     let entities: Vec<Value> = media_ids
         .iter()
@@ -766,7 +897,11 @@ pub fn create_tweet_variables(text: &str, reply_to: Option<&str>, media_ids: &[S
 }
 
 fn mime_for_path(path: &std::path::Path) -> Result<String> {
-    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
     let mime = match ext.as_str() {
         "png" => "image/png",
         "jpg" | "jpeg" => "image/jpeg",
@@ -834,7 +969,7 @@ fn bookmarks_features() -> Value {
     })
 }
 
-/// Feature flags for UserByScreenName (profile lookup carries its own set).
+/// Feature flags for `UserByScreenName` (profile lookup carries its own set).
 fn user_features() -> Value {
     serde_json::json!({
         "hidden_profile_subscriptions_enabled": true,
@@ -853,7 +988,7 @@ fn user_features() -> Value {
     })
 }
 
-/// Feature flags shared by the TweetDetail and SearchTimeline read queries.
+/// Feature flags shared by the `TweetDetail` and `SearchTimeline` read queries.
 fn read_features() -> Value {
     serde_json::json!({
         "rweb_tipjar_consumption_enabled": true,
@@ -882,7 +1017,7 @@ fn read_features() -> Value {
     })
 }
 
-/// Feature flags for CreateTweet (writes carry a larger set than reads).
+/// Feature flags for `CreateTweet` (writes carry a larger set than reads).
 fn write_features() -> Value {
     serde_json::json!({
         "premium_content_api_read_enabled": false,
@@ -945,7 +1080,10 @@ mod tests {
     fn media_ids_become_entities() {
         let v = create_tweet_variables("pic", None, &["999".to_string()]);
         assert_eq!(v["media"]["media_entities"][0]["media_id"], "999");
-        assert_eq!(v["media"]["media_entities"][0]["tagged_users"], serde_json::json!([]));
+        assert_eq!(
+            v["media"]["media_entities"][0]["tagged_users"],
+            serde_json::json!([])
+        );
     }
 
     #[test]

@@ -5,7 +5,10 @@ use anyhow::Result;
 
 /// Defaults built once from the compiled-in table in `config`.
 static DEFAULT_IDS: LazyLock<HashMap<String, String>> = LazyLock::new(|| {
-    crate::config::QUERY_IDS.iter().map(|&(k, v)| (k.to_string(), v.to_string())).collect()
+    crate::config::QUERY_IDS
+        .iter()
+        .map(|&(k, v)| (k.to_string(), v.to_string()))
+        .collect()
 });
 
 /// Ids scraped by this process. The 404 self-heal records what it found here so
@@ -20,7 +23,8 @@ const DISCOVERY_PAGES: &[&str] = &[
     "https://x.com/notifications",
     "https://x.com/settings/profile",
 ];
-const BUNDLE_RE: &str = r"https://abs\.twimg\.com/responsive-web/client-web(?:-legacy)?/[A-Za-z0-9._-]+\.js";
+const BUNDLE_RE: &str =
+    r"https://abs\.twimg\.com/responsive-web/client-web(?:-legacy)?/[A-Za-z0-9._-]+\.js";
 
 /// Compiled-in default id for an operation — the offline fallback.
 pub fn baked(operation: &str) -> Option<String> {
@@ -34,9 +38,13 @@ pub fn baked(operation: &str) -> Option<String> {
 /// deliberate.
 pub fn candidates(operation: &str) -> Vec<String> {
     let mut out = Vec::new();
-    for id in [crate::config::query_id_override(operation), baked(operation), scraped(operation)]
-        .into_iter()
-        .flatten()
+    for id in [
+        crate::config::query_id_override(operation),
+        baked(operation),
+        scraped(operation),
+    ]
+    .into_iter()
+    .flatten()
     {
         if !id.is_empty() && !out.contains(&id) {
             out.push(id);
@@ -57,8 +65,16 @@ pub fn extract_operations(js: &str, targets: &[&str]) -> HashMap<String, String>
     // ponytail: the two export-anchored orders cover current x.com bundles; looser
     // scan-between patterns are dead weight until a bundle layout breaks this.
     let patterns: [(&str, usize, usize); 2] = [
-        (r#"e\.exports=\{queryId:"([^"]+)",operationName:"([^"]+)""#, 1, 2),
-        (r#"e\.exports=\{operationName:"([^"]+)",queryId:"([^"]+)""#, 2, 1),
+        (
+            r#"e\.exports=\{queryId:"([^"]+)",operationName:"([^"]+)""#,
+            1,
+            2,
+        ),
+        (
+            r#"e\.exports=\{operationName:"([^"]+)",queryId:"([^"]+)""#,
+            2,
+            1,
+        ),
     ];
     for (pat, id_group, op_group) in patterns {
         let re = regex::Regex::new(pat).unwrap();
@@ -75,7 +91,7 @@ pub fn extract_operations(js: &str, targets: &[&str]) -> HashMap<String, String>
 
 /// Single best id for an operation, used right after a forced scrape (so the
 /// scraped id outranks the defaults): config override, scraped, then baked.
-pub async fn resolve(operation: &str) -> String {
+pub fn resolve(operation: &str) -> String {
     crate::config::query_id_override(operation)
         .or_else(|| scraped(operation))
         .or_else(|| baked(operation))
@@ -84,14 +100,19 @@ pub async fn resolve(operation: &str) -> String {
 
 /// Scrape x.com bundles for current ids of `operations`, recording them for the
 /// rest of this process. The 404 self-heal: called when a baked id has rotated out.
-pub async fn force_refresh(http: &reqwest::Client, operations: &[&str]) -> Result<HashMap<String, String>> {
+pub async fn force_refresh(
+    http: &reqwest::Client,
+    operations: &[&str],
+) -> Result<HashMap<String, String>> {
     let bundles = discover_bundles(http).await?;
     let mut found = HashMap::new();
     for url in bundles {
         if found.len() == operations.len() {
             break;
         }
-        let Ok(js) = fetch_text(http, &url).await else { continue };
+        let Ok(js) = fetch_text(http, &url).await else {
+            continue;
+        };
         for (op, id) in extract_operations(&js, operations) {
             found.entry(op).or_insert(id);
         }
@@ -110,7 +131,9 @@ async fn discover_bundles(http: &reqwest::Client) -> Result<Vec<String>> {
     let mut seen = HashSet::new();
     let mut bundles = Vec::new();
     for page in DISCOVERY_PAGES {
-        let Ok(html) = fetch_text(http, page).await else { continue };
+        let Ok(html) = fetch_text(http, page).await else {
+            continue;
+        };
         for m in re.find_iter(&html) {
             if seen.insert(m.as_str().to_string()) {
                 bundles.push(m.as_str().to_string());

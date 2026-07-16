@@ -1,8 +1,9 @@
+use std::fmt::Write as _;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use sha2::{Digest, Sha256};
 
 use crate::models::{Author, DmConversation, DmMessage, Profile, Tweet};
@@ -135,8 +136,7 @@ impl Db {
                 [],
                 |r| r.get::<_, i64>(0),
             )
-            .map(|n| n > 0)
-            .unwrap_or(false);
+            .is_ok_and(|n| n > 0);
         if old_snapshots {
             conn.execute("DROP TABLE profile_snapshots", [])?;
         }
@@ -158,7 +158,12 @@ impl Db {
 
     /// Archive tweets and record their membership in a named collection (e.g.
     /// "bookmarks", "likes") for the given account. Idempotent.
-    pub fn archive_collection(&mut self, tweets: &[Tweet], account_id: &str, kind: &str) -> Result<usize> {
+    pub fn archive_collection(
+        &mut self,
+        tweets: &[Tweet],
+        account_id: &str,
+        kind: &str,
+    ) -> Result<usize> {
         let now = now_secs().to_string();
         let tx = self.conn.transaction()?;
         let mut saved = 0;
@@ -179,7 +184,12 @@ impl Db {
     }
 
     /// Record a follow-graph snapshot: upsert the profiles and their edges.
-    pub fn save_follow_edges(&mut self, account_id: &str, direction: &str, profiles: &[Profile]) -> Result<usize> {
+    pub fn save_follow_edges(
+        &mut self,
+        account_id: &str,
+        direction: &str,
+        profiles: &[Profile],
+    ) -> Result<usize> {
         let now = now_secs().to_string();
         let tx = self.conn.transaction()?;
         let mut saved = 0;
@@ -219,7 +229,11 @@ impl Db {
     }
 
     /// Persist DM conversations and messages (idempotent upserts).
-    pub fn save_dms(&mut self, conversations: &[DmConversation], messages: &[DmMessage]) -> Result<()> {
+    pub fn save_dms(
+        &mut self,
+        conversations: &[DmConversation],
+        messages: &[DmMessage],
+    ) -> Result<()> {
         let now = now_secs().to_string();
         let tx = self.conn.transaction()?;
         for c in conversations {
@@ -263,12 +277,17 @@ impl Db {
             }
         }
         self.conn.execute("DELETE FROM tweets_fts", [])?;
-        self.conn.execute("INSERT INTO tweets_fts(tweet_id, text) SELECT id, text FROM tweets", [])?;
+        self.conn.execute(
+            "INSERT INTO tweets_fts(tweet_id, text) SELECT id, text FROM tweets",
+            [],
+        )?;
         Ok(total)
     }
 
     fn dump_table(&self, table: &str) -> Result<String> {
-        let mut stmt = self.conn.prepare(&format!("SELECT * FROM \"{table}\" ORDER BY 1"))?;
+        let mut stmt = self
+            .conn
+            .prepare(&format!("SELECT * FROM \"{table}\" ORDER BY 1"))?;
         let cols: Vec<String> = (0..stmt.column_count())
             .map(|i| stmt.column_name(i).unwrap_or("").to_string())
             .collect();
@@ -277,7 +296,10 @@ impl Db {
         while let Some(row) = rows.next()? {
             let mut obj = serde_json::Map::new();
             for (i, col) in cols.iter().enumerate() {
-                obj.insert(col.clone(), val_to_json(row.get::<_, rusqlite::types::Value>(i)?));
+                obj.insert(
+                    col.clone(),
+                    val_to_json(row.get::<_, rusqlite::types::Value>(i)?),
+                );
             }
             out.push_str(&serde_json::Value::Object(obj).to_string());
             out.push('\n');
@@ -291,9 +313,17 @@ impl Db {
         for line in jsonl.lines().filter(|l| !l.trim().is_empty()) {
             let obj: serde_json::Map<String, serde_json::Value> = serde_json::from_str(line)?;
             let cols: Vec<&String> = obj.keys().collect();
-            let col_list = cols.iter().map(|c| format!("\"{c}\"")).collect::<Vec<_>>().join(",");
-            let placeholders = (1..=cols.len()).map(|i| format!("?{i}")).collect::<Vec<_>>().join(",");
-            let vals: Vec<rusqlite::types::Value> = cols.iter().map(|c| json_to_val(&obj[*c])).collect();
+            let col_list = cols
+                .iter()
+                .map(|c| format!("\"{c}\""))
+                .collect::<Vec<_>>()
+                .join(",");
+            let placeholders = (1..=cols.len())
+                .map(|i| format!("?{i}"))
+                .collect::<Vec<_>>()
+                .join(",");
+            let vals: Vec<rusqlite::types::Value> =
+                cols.iter().map(|c| json_to_val(&obj[*c])).collect();
             tx.execute(
                 &format!("INSERT OR REPLACE INTO \"{table}\"({col_list}) VALUES({placeholders})"),
                 rusqlite::params_from_iter(vals),
@@ -375,7 +405,12 @@ fn upsert_tweet(tx: &rusqlite::Transaction, tweet: &Tweet, now: &str) -> rusqlit
     tx.execute(
         "INSERT INTO profiles(id, handle, display_name, created_at) VALUES(?1, ?2, ?3, ?4)
          ON CONFLICT(id) DO UPDATE SET handle=excluded.handle, display_name=excluded.display_name",
-        params![tweet.author.id, tweet.author.username, tweet.author.name, now],
+        params![
+            tweet.author.id,
+            tweet.author.username,
+            tweet.author.name,
+            now
+        ],
     )?;
     tx.execute(
         "INSERT INTO tweets(id, author_profile_id, text, created_at, reply_to_id, like_count)
@@ -391,8 +426,14 @@ fn upsert_tweet(tx: &rusqlite::Transaction, tweet: &Tweet, now: &str) -> rusqlit
             tweet.like_count.unwrap_or(0),
         ],
     )?;
-    tx.execute("DELETE FROM tweets_fts WHERE tweet_id = ?1", params![tweet.id])?;
-    tx.execute("INSERT INTO tweets_fts(tweet_id, text) VALUES(?1, ?2)", params![tweet.id, tweet.text])?;
+    tx.execute(
+        "DELETE FROM tweets_fts WHERE tweet_id = ?1",
+        params![tweet.id],
+    )?;
+    tx.execute(
+        "INSERT INTO tweets_fts(tweet_id, text) VALUES(?1, ?2)",
+        params![tweet.id, tweet.text],
+    )?;
     Ok(true)
 }
 
@@ -402,7 +443,9 @@ fn row_to_tweet(row: &rusqlite::Row) -> rusqlite::Result<Tweet> {
         text: row.get(1)?,
         created_at: row.get::<_, Option<String>>(2)?.filter(|s| !s.is_empty()),
         in_reply_to_status_id: row.get(3)?,
-        like_count: row.get::<_, Option<i64>>(4)?.map(|n| n as u64),
+        like_count: row
+            .get::<_, Option<i64>>(4)?
+            .map(|n| u64::try_from(n).unwrap_or(0)),
         author: Author {
             id: row.get(5)?,
             username: row.get(6)?,
@@ -430,8 +473,10 @@ fn json_to_val(v: &serde_json::Value) -> rusqlite::types::Value {
     use rusqlite::types::Value as V;
     match v {
         serde_json::Value::Null => V::Null,
-        serde_json::Value::Bool(b) => V::Integer(*b as i64),
-        serde_json::Value::Number(n) => n.as_i64().map(V::Integer).unwrap_or_else(|| V::Real(n.as_f64().unwrap_or(0.0))),
+        serde_json::Value::Bool(b) => V::Integer(i64::from(*b)),
+        serde_json::Value::Number(n) => n
+            .as_i64()
+            .map_or_else(|| V::Real(n.as_f64().unwrap_or(0.0)), V::Integer),
         serde_json::Value::String(s) => V::Text(s.clone()),
         other => V::Text(other.to_string()),
     }
@@ -451,11 +496,16 @@ fn snapshot_hash(p: &Profile) -> String {
         h.update(field.as_bytes());
         h.update([0x1f]);
     }
-    h.finalize().iter().take(8).map(|b| format!("{b:02x}")).collect()
+    h.finalize().iter().take(8).fold(String::new(), |mut s, b| {
+        let _ = write!(s, "{b:02x}");
+        s
+    })
 }
 
 fn now_secs() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
 }
 
 /// Build an FTS5 MATCH expression that ANDs every whitespace-separated term.
@@ -478,7 +528,11 @@ mod tests {
         Tweet {
             id: id.into(),
             text: text.into(),
-            author: Author { id: uid.into(), username: handle.into(), name: handle.into() },
+            author: Author {
+                id: uid.into(),
+                username: handle.into(),
+                name: handle.into(),
+            },
             created_at: Some(iso_date.into()),
             reply_count: Some(1),
             retweet_count: Some(2),
@@ -509,8 +563,14 @@ mod tests {
     #[test]
     fn find_matches_text_and_rehydrates_author() {
         let mut db = db();
-        db.archive(&[tweet("9", "u9", "carol", "designing agent loops", "2026-07-06T10:00:00.000Z")])
-            .unwrap();
+        db.archive(&[tweet(
+            "9",
+            "u9",
+            "carol",
+            "designing agent loops",
+            "2026-07-06T10:00:00.000Z",
+        )])
+        .unwrap();
         let hits = db.find("loops", 10).unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].id, "9");
@@ -522,8 +582,14 @@ mod tests {
     #[test]
     fn find_ands_terms_regardless_of_order() {
         let mut db = db();
-        db.archive(&[tweet("9", "u9", "carol", "designing agent loops carefully", "2026-07-06T10:00:00.000Z")])
-            .unwrap();
+        db.archive(&[tweet(
+            "9",
+            "u9",
+            "carol",
+            "designing agent loops carefully",
+            "2026-07-06T10:00:00.000Z",
+        )])
+        .unwrap();
         // Words present but reordered / non-adjacent must still match.
         assert_eq!(db.find("loops designing", 10).unwrap().len(), 1);
         assert_eq!(db.find("agent carefully", 10).unwrap().len(), 1);
@@ -543,14 +609,24 @@ mod tests {
         assert_eq!(all.len(), 1, "same id upserts, not duplicates");
         assert_eq!(all[0].text, "edited");
         assert_eq!(db.find("edited", 10).unwrap().len(), 1);
-        assert_eq!(db.find("first", 10).unwrap().len(), 0, "fts reindexed on update");
+        assert_eq!(
+            db.find("first", 10).unwrap().len(),
+            0,
+            "fts reindexed on update"
+        );
     }
 
     #[test]
     fn backup_round_trips_and_rebuilds_fts() {
         let mut src = db();
         src.archive_collection(
-            &[tweet("42", "u42", "dave", "backup me", "2026-07-06T10:00:00.000Z")],
+            &[tweet(
+                "42",
+                "u42",
+                "dave",
+                "backup me",
+                "2026-07-06T10:00:00.000Z",
+            )],
             "acct1",
             "bookmarks",
         )
@@ -564,7 +640,11 @@ mod tests {
         let s = restored.stats().unwrap();
         assert_eq!(s.tweets, 1);
         assert_eq!(s.collections, 1);
-        assert_eq!(restored.find("backup", 10).unwrap().len(), 1, "fts rebuilt on import");
+        assert_eq!(
+            restored.find("backup", 10).unwrap().len(),
+            1,
+            "fts rebuilt on import"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -582,7 +662,9 @@ mod tests {
             verified: false,
         };
         let count = |db: &Db| -> i64 {
-            db.conn.query_row("SELECT count(*) FROM profile_snapshots", [], |r| r.get(0)).unwrap()
+            db.conn
+                .query_row("SELECT count(*) FROM profile_snapshots", [], |r| r.get(0))
+                .unwrap()
         };
         db.save_profile(&p).unwrap();
         db.save_profile(&p).unwrap(); // identical → no new snapshot
@@ -596,13 +678,21 @@ mod tests {
     fn archive_collection_records_membership_idempotently() {
         let mut db = db();
         let t = tweet("3", "u3", "carol", "saved", "2026-07-06T10:00:00.000Z");
-        assert_eq!(db.archive_collection(std::slice::from_ref(&t), "acct1", "bookmarks").unwrap(), 1);
+        assert_eq!(
+            db.archive_collection(std::slice::from_ref(&t), "acct1", "bookmarks")
+                .unwrap(),
+            1
+        );
         // re-syncing the same tweet doesn't duplicate the collection row
         db.archive_collection(&[t], "acct1", "bookmarks").unwrap();
         let s = db.stats().unwrap();
         assert_eq!(s.tweets, 1);
         assert_eq!(s.collections, 1);
-        assert_eq!(db.find("saved", 10).unwrap().len(), 1, "collection tweets are also searchable");
+        assert_eq!(
+            db.find("saved", 10).unwrap().len(),
+            1,
+            "collection tweets are also searchable"
+        );
     }
 
     #[test]
@@ -612,14 +702,24 @@ mod tests {
         no_author.author.id = String::new();
         let no_id = tweet("", "u1", "alice", "no tweet id", "2026-07-06T10:00:00.000Z");
         db.archive(&[no_author, no_id]).unwrap();
-        assert_eq!(db.recent(10).unwrap().len(), 0, "unkeyable records are skipped, not fragmented");
+        assert_eq!(
+            db.recent(10).unwrap().len(),
+            0,
+            "unkeyable records are skipped, not fragmented"
+        );
     }
 
     #[test]
     fn find_tolerates_quotes_in_query() {
         let mut db = db();
-        db.archive(&[tweet("7", "u7", "erin", "she said hi today", "2026-07-06T10:00:00.000Z")])
-            .unwrap();
+        db.archive(&[tweet(
+            "7",
+            "u7",
+            "erin",
+            "she said hi today",
+            "2026-07-06T10:00:00.000Z",
+        )])
+        .unwrap();
         // Must not raise an FTS5 syntax error.
         let _ = db.find("said \"hi\"", 10).unwrap();
     }

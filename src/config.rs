@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use serde::Deserialize;
 
 /// Compiled-in default GraphQL query ids — the seed for the user config file
@@ -33,7 +33,7 @@ pub const QUERY_IDS: &[(&str, &str)] = &[
     ("DeleteBookmark", "Wlmlj2-xzyS1GN3a6cj-mQ"),
 ];
 
-/// `~/.kicau` — the single home for config, cookies, cache, and the SQLite store.
+/// `~/.kicau` — the single home for config, cookies, cache, and the `SQLite` store.
 pub fn state_dir() -> PathBuf {
     PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".kicau")
 }
@@ -67,7 +67,11 @@ fn load_config() -> FileConfig {
 
 /// A user-pinned query id from `config.toml`'s `[query_ids]`, if set.
 pub fn query_id_override(operation: &str) -> Option<String> {
-    load_config().query_ids.get(operation).cloned().and_then(|v| nonempty(Some(v)))
+    load_config()
+        .query_ids
+        .get(operation)
+        .cloned()
+        .and_then(|v| nonempty(Some(v)))
 }
 
 pub struct Credentials {
@@ -77,20 +81,36 @@ pub struct Credentials {
 }
 
 /// Precedence: CLI flags → env vars → config.toml `[credentials]`.
-pub fn resolve_credentials(flag_auth: Option<String>, flag_ct0: Option<String>) -> Result<Credentials> {
+pub fn resolve_credentials(
+    flag_auth: Option<String>,
+    flag_ct0: Option<String>,
+) -> Result<Credentials> {
     if let (Some(auth_token), Some(ct0)) = (nonempty(flag_auth), nonempty(flag_ct0)) {
-        return Ok(Credentials { auth_token, ct0, source: "CLI flags".into() });
+        return Ok(Credentials {
+            auth_token,
+            ct0,
+            source: "CLI flags".into(),
+        });
     }
 
     if let (Some(auth_token), Some(ct0)) = (env("KICAU_AUTH_TOKEN"), env("KICAU_CT0")) {
-        return Ok(Credentials { auth_token, ct0, source: "environment variables".into() });
+        return Ok(Credentials {
+            auth_token,
+            ct0,
+            source: "environment variables".into(),
+        });
     }
 
     let cfg = load_config();
-    if let (Some(auth_token), Some(ct0)) =
-        (nonempty(cfg.credentials.auth_token), nonempty(cfg.credentials.ct0))
-    {
-        return Ok(Credentials { auth_token, ct0, source: config_toml_path().display().to_string() });
+    if let (Some(auth_token), Some(ct0)) = (
+        nonempty(cfg.credentials.auth_token),
+        nonempty(cfg.credentials.ct0),
+    ) {
+        return Ok(Credentials {
+            auth_token,
+            ct0,
+            source: config_toml_path().display().to_string(),
+        });
     }
 
     Err(anyhow!(
@@ -119,7 +139,10 @@ mod tests {
         .unwrap();
         assert_eq!(cfg.credentials.auth_token.as_deref(), Some("abc"));
         assert_eq!(cfg.credentials.ct0.as_deref(), Some("def"));
-        assert_eq!(cfg.query_ids.get("SearchTimeline").map(String::as_str), Some("PINNED"));
+        assert_eq!(
+            cfg.query_ids.get("SearchTimeline").map(String::as_str),
+            Some("PINNED")
+        );
     }
 
     #[test]
