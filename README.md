@@ -105,3 +105,11 @@ Run `kicau <command> --help` for options. Every write supports `--dry-run`.
 |---|---|
 | `~/.kicau/config.toml` | all config: credentials and GraphQL query ids |
 | `~/.kicau/kicau.sqlite` | local archive |
+
+## kicau mania
+
+```sh
+kicau mania
+```
+
+![a cat dancing in ASCII](docs/mania.gif)
