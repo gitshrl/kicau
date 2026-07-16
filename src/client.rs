@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::time::Duration;
 
 use anyhow::{Result, anyhow};
@@ -34,6 +35,48 @@ fn field_toggles(operation: &str) -> Option<Value> {
     ARTICLE_OPS
         .contains(&operation)
         .then(|| serde_json::json!({ "withArticlePlainText": true }))
+}
+
+/// How long to wait between timeline pages. X rate-limits reads, and a long
+/// backfill is dozens of pages.
+const PAGE_DELAY: Duration = Duration::from_secs(2);
+
+/// Entries X will serve in one page. It silently caps at 100 and rejects a
+/// count much beyond that with "Query: Unspecified", so the count on the wire is
+/// a page size, never the total wanted.
+const PAGE_SIZE: u32 = 100;
+
+/// The cursor for the next page, or None at the end of a timeline.
+///
+/// X writes cursor entries two ways: timelines put the value straight on
+/// `content`, conversation threads nest it under `content.itemContent`. Both
+/// appear in real responses, so both are read.
+fn bottom_cursor(instructions: &Value) -> Option<String> {
+    let entries = instructions
+        .as_array()?
+        .iter()
+        .filter_map(|instruction| instruction.get("entries").and_then(Value::as_array))
+        .flatten();
+
+    for entry in entries {
+        let is_bottom = entry
+            .get("entryId")
+            .and_then(Value::as_str)
+            .is_some_and(|id| id.starts_with("cursor-bottom"));
+        if !is_bottom {
+            continue;
+        }
+        if let Some(content) = entry.get("content") {
+            let value = content
+                .get("value")
+                .or_else(|| content.pointer("/itemContent/value"))
+                .and_then(Value::as_str);
+            if let Some(value) = value {
+                return Some(value.to_string());
+            }
+        }
+    }
+    None
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -346,6 +389,7 @@ impl TwitterClient {
             variables,
             read_features(),
             "/user/result/timeline/timeline/instructions",
+            count,
         )
         .await
     }
@@ -364,6 +408,7 @@ impl TwitterClient {
             variables,
             read_features(),
             "/home/home_timeline_urt/instructions",
+            count,
         )
         .await
     }
@@ -382,6 +427,7 @@ impl TwitterClient {
             variables,
             bookmarks_features(),
             "/bookmark_timeline_v2/timeline/instructions",
+            count,
         )
         .await
     }
@@ -394,23 +440,75 @@ impl TwitterClient {
             variables,
             read_features(),
             "/list/tweets_timeline/timeline/instructions",
+            count,
         )
         .await
     }
 
-    /// Shared read-timeline path: GraphQL GET, then parse tweets at `pointer`.
+    /// Shared read-timeline path: GraphQL GET, parse tweets at `pointer`, then
+    /// follow the bottom cursor until `count` tweets are collected or the
+    /// timeline ends.
+    ///
+    /// X refuses to paginate a timeline indefinitely: bookmarks stop at roughly
+    /// 400 entries deep with an `OperationalError`, whatever the page size. When
+    /// a page fails after others have succeeded, the pages already collected are
+    /// returned and the reason is reported on stderr, because throwing away a
+    /// completed backfill helps nobody. A failure on the first page is the
+    /// caller's problem and propagates.
     async fn timeline(
         &self,
         operation: &str,
         variables: Value,
         features: Value,
         pointer: &str,
+        count: u32,
     ) -> Result<Vec<Tweet>> {
-        let data = self
-            .fetch_graphql(operation, variables, features, Call::Read)
-            .await?;
-        let instructions = data.pointer(pointer).cloned().unwrap_or(Value::Null);
-        Ok(parse::tweets_from_instructions(&instructions))
+        let want = count as usize;
+        let mut variables = variables;
+        // Callers ask for a total; the wire wants a page size.
+        variables["count"] = Value::from(count.min(PAGE_SIZE));
+        let mut tweets = Vec::new();
+        let mut seen_cursors = HashSet::new();
+
+        loop {
+            let data = match self
+                .fetch_graphql(operation, variables.clone(), features.clone(), Call::Read)
+                .await
+            {
+                Ok(data) => data,
+                Err(e) if tweets.is_empty() => return Err(e),
+                Err(e) => {
+                    eprintln!(
+                        "⚠️  {operation} stopped after {} tweets: {e}",
+                        tweets.len()
+                    );
+                    break;
+                }
+            };
+            let instructions = data.pointer(pointer).cloned().unwrap_or(Value::Null);
+            let page = parse::tweets_from_instructions(&instructions);
+
+            // An empty page means the timeline is exhausted; without this the
+            // cursor can keep resolving and the loop never ends.
+            if page.is_empty() {
+                break;
+            }
+            tweets.extend(page);
+            if tweets.len() >= want {
+                break;
+            }
+
+            let Some(cursor) = bottom_cursor(&instructions) else { break };
+            // At the end of a timeline X hands back the cursor it was given.
+            if !seen_cursors.insert(cursor.clone()) {
+                break;
+            }
+            variables["cursor"] = Value::String(cursor);
+            tokio::time::sleep(PAGE_DELAY).await;
+        }
+
+        tweets.truncate(want);
+        Ok(tweets)
     }
 
     /// Delete one of your own tweets.
@@ -1099,6 +1197,40 @@ mod tests {
         assert!(is_transient("Dependency: Timedout"));
         assert!(!is_transient("Could not authenticate you."));
         assert!(!is_transient("Bad guest token"));
+    }
+
+    #[test]
+    fn bottom_cursor_reads_both_shapes_x_uses() {
+        // A real Bookmarks page: the value sits directly on content.
+        let timeline = serde_json::json!([{
+            "type": "TimelineAddEntries",
+            "entries": [
+                { "entryId": "tweet-1", "content": {} },
+                { "entryId": "cursor-top-9", "content": { "cursorType": "Top", "value": "TOP" } },
+                { "entryId": "cursor-bottom-9", "content": {
+                    "entryType": "TimelineTimelineCursor", "cursorType": "Bottom", "value": "NEXT" } }
+            ]
+        }]);
+        assert_eq!(bottom_cursor(&timeline).as_deref(), Some("NEXT"));
+
+        // A conversation thread: the value is nested under itemContent.
+        let thread = serde_json::json!([{
+            "entries": [
+                { "entryId": "cursor-bottom-1", "content": {
+                    "itemContent": { "cursorType": "Bottom", "value": "NESTED" } } }
+            ]
+        }]);
+        assert_eq!(bottom_cursor(&thread).as_deref(), Some("NESTED"));
+    }
+
+    #[test]
+    fn bottom_cursor_absent_ends_pagination() {
+        let last_page = serde_json::json!([{ "entries": [{ "entryId": "tweet-1", "content": {} }] }]);
+        assert_eq!(bottom_cursor(&last_page), None);
+        // A cursor entry with no value must not be mistaken for one.
+        let valueless = serde_json::json!([{ "entries": [{ "entryId": "cursor-bottom-1", "content": {} }] }]);
+        assert_eq!(bottom_cursor(&valueless), None);
+        assert_eq!(bottom_cursor(&serde_json::json!({})), None);
     }
 
     #[test]
