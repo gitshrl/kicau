@@ -5,7 +5,7 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue, InvalidHeaderValue};
 use serde_json::Value;
 
 use crate::models::{DmConversation, DmMessage, Profile, Tweet};
-use crate::{parse, query_ids};
+use crate::{parse, query};
 
 /// Request shape per GraphQL operation. X routes these differently: reads take a
 /// GET, search a POST with variables still in the query string, writes a plain POST.
@@ -41,7 +41,7 @@ pub struct TwitterClient {
     ct0: String,
     user_agent: String,
     http: reqwest::Client,
-    txid: tokio::sync::OnceCell<Option<crate::transaction_id::TxidGenerator>>,
+    txid: tokio::sync::OnceCell<Option<crate::transaction::TxidGenerator>>,
 }
 
 pub struct CurrentUser {
@@ -72,7 +72,7 @@ impl TwitterClient {
         let generator = self
             .txid
             .get_or_init(|| async {
-                crate::transaction_id::TxidGenerator::fetch(&self.http, &cookie, &self.user_agent)
+                crate::transaction::TxidGenerator::fetch(&self.http, &cookie, &self.user_agent)
                     .await
                     .ok()
             })
@@ -123,7 +123,7 @@ impl TwitterClient {
     ) -> Result<Value> {
         // Ordered candidates (user pin → baked → fresh cache); applies to reads
         // and writes alike.
-        for query_id in &query_ids::candidates(operation) {
+        for query_id in &query::candidates(operation) {
             match self.graphql_call_resilient(query_id, operation, &variables, &features, call).await {
                 Err(GqlError::Http { status: 404, .. }) => continue,
                 Err(e) => return Err(friendly(e)),
@@ -132,8 +132,8 @@ impl TwitterClient {
         }
 
         // Every known id rotated out — scrape current ids and retry once.
-        query_ids::force_refresh(&self.http, &[operation]).await?;
-        let query_id = query_ids::resolve(operation).await;
+        query::force_refresh(&self.http, &[operation]).await?;
+        let query_id = query::resolve(operation).await;
         self.graphql_call_resilient(&query_id, operation, &variables, &features, call)
             .await
             .map_err(friendly)
@@ -521,7 +521,7 @@ impl TwitterClient {
         &self,
         operations: &[&str],
     ) -> Result<std::collections::HashMap<String, String>> {
-        query_ids::force_refresh(&self.http, operations).await
+        query::force_refresh(&self.http, operations).await
     }
 
     /// Replies to a tweet: conversation tweets whose parent is this id.

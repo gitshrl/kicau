@@ -5,8 +5,8 @@ mod extract;
 mod models;
 mod output;
 mod parse;
-mod query_ids;
-mod transaction_id;
+mod query;
+mod transaction;
 
 use std::time::Duration;
 
