@@ -234,6 +234,30 @@ impl TwitterClient {
         Ok(parse::tweets_from_instructions(instructions))
     }
 
+    /// Accounts a user follows.
+    pub async fn following(&self, handle: &str, count: u32) -> Result<Vec<Profile>> {
+        self.user_graph("Following", handle, count).await
+    }
+    /// Accounts that follow a user.
+    pub async fn followers(&self, handle: &str, count: u32) -> Result<Vec<Profile>> {
+        self.user_graph("Followers", handle, count).await
+    }
+
+    async fn user_graph(&self, operation: &str, handle: &str, count: u32) -> Result<Vec<Profile>> {
+        let user = self.user(handle).await?;
+        let variables = serde_json::json!({
+            "userId": user.id,
+            "count": count,
+            "includePromotedContent": false,
+        });
+        let data = self.fetch_graphql(operation, variables, read_features(), Call::Read).await?;
+        let instructions = data
+            .pointer("/user/result/timeline/timeline/instructions")
+            .cloned()
+            .unwrap_or(Value::Null);
+        Ok(parse::users_from_instructions(&instructions))
+    }
+
     /// A profile by handle via UserByScreenName.
     pub async fn user(&self, handle: &str) -> Result<Profile> {
         let handle = handle.trim_start_matches('@');

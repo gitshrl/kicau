@@ -45,6 +45,21 @@ pub fn print_tweet(tweet: &Tweet, json: bool, plain: bool) {
     }
 }
 
+/// Compact profile-list view (follow graph).
+pub fn print_profiles(profiles: &[Profile], json: bool, empty_message: &str) {
+    if json {
+        println!("{}", serde_json::to_string_pretty(profiles).unwrap_or_default());
+        return;
+    }
+    if profiles.is_empty() {
+        println!("{empty_message}");
+        return;
+    }
+    for p in profiles {
+        println!("@{} ({})", p.handle, p.name);
+    }
+}
+
 /// Tweet-list view (search/mentions/replies/thread): blocks separated by a rule.
 pub fn print_tweets(tweets: &[Tweet], json: bool, plain: bool, empty_message: &str) {
     if json {

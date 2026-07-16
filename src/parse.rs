@@ -65,6 +65,23 @@ pub fn map_tweet_result(result: &Value) -> Option<Tweet> {
     })
 }
 
+/// Walk timeline `instructions` collecting user profiles from `user_results`
+/// entries (Following/Followers timelines).
+pub fn users_from_instructions(instructions: &Value) -> Vec<Profile> {
+    let mut users = Vec::new();
+    for instruction in as_array(instructions) {
+        for entry in as_array(&instruction["entries"]) {
+            if let Some(p) = entry
+                .pointer("/content/itemContent/user_results/result")
+                .and_then(parse_user)
+            {
+                users.push(p);
+            }
+        }
+    }
+    users
+}
+
 /// Walk timeline `instructions` (TweetDetail or SearchTimeline shape) collecting
 /// every tweet. Handles both direct `itemContent` entries and the nested
 /// `items[]` of conversationthread modules.
@@ -233,6 +250,21 @@ mod tests {
     #[test]
     fn unavailable_user_yields_none() {
         assert!(parse_user(&json!({ "__typename": "UserUnavailable" })).is_none());
+    }
+
+    #[test]
+    fn users_from_timeline_instructions() {
+        let instructions = json!([{
+            "entries": [
+                { "content": { "itemContent": { "user_results": { "result": {
+                    "rest_id": "7", "legacy": { "screen_name": "bob", "name": "Bob" }
+                } } } } },
+                { "content": { "itemContent": { "cursorType": "Bottom" } } }
+            ]
+        }]);
+        let users = users_from_instructions(&instructions);
+        assert_eq!(users.len(), 1);
+        assert_eq!(users[0].handle, "bob");
     }
 
     #[test]

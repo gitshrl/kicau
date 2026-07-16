@@ -111,6 +111,20 @@ enum Command {
         #[arg(short = 'n', long, default_value_t = 100)]
         limit: u32,
     },
+    /// Snapshot a user's follow graph into the local store
+    Graph {
+        /// Direction: following | followers
+        direction: String,
+        /// @handle
+        handle: String,
+        #[arg(short = 'n', long, default_value_t = 50)]
+        count: u32,
+    },
+    /// Capture a profile snapshot into the local store
+    Profiles {
+        /// @handle
+        handle: String,
+    },
     /// Show local database stats
     Db {
         #[command(subcommand)]
@@ -231,12 +245,13 @@ async fn run() -> Result<()> {
             if cli.json {
                 println!(
                     "{}",
-                    serde_json::json!({ "tweets": s.tweets, "profiles": s.profiles, "collections": s.collections, "bytes": s.bytes })
+                    serde_json::json!({ "tweets": s.tweets, "profiles": s.profiles, "collections": s.collections, "edges": s.edges, "bytes": s.bytes })
                 );
             } else {
                 println!("tweets:      {}", s.tweets);
                 println!("profiles:    {}", s.profiles);
                 println!("collections: {}", s.collections);
+                println!("edges:       {}", s.edges);
                 println!("size:        {} KiB", s.bytes / 1024);
             }
             return Ok(());
@@ -265,6 +280,30 @@ async fn run() -> Result<()> {
             let mut db = db::Db::open_default()?;
             let saved = db.archive_collection(&tweets, &user.id, &what)?;
             println!("✅ synced {saved} {what} into the local store");
+            Ok(())
+        }
+        Command::Graph { direction, handle, count } => {
+            let profiles = match direction.as_str() {
+                "following" => client.following(&handle, count).await?,
+                "followers" => client.followers(&handle, count).await?,
+                other => return Err(anyhow!("unknown direction '{other}' (use: following | followers)")),
+            };
+            output::print_profiles(&profiles, cli.json, "No accounts found.");
+            if !cli.no_db {
+                let account = client.user(&handle).await?;
+                let n = db::Db::open_default()?.save_follow_edges(&account.id, &direction, &profiles)?;
+                if !cli.json {
+                    eprintln!("📥 saved {n} {direction} edges");
+                }
+            }
+            Ok(())
+        }
+        Command::Profiles { handle } => {
+            let profile = client.user(&handle).await?;
+            output::print_profile(&profile, cli.json, cli.plain);
+            if !cli.no_db {
+                db::Db::open_default()?.save_profile(&profile)?;
+            }
             Ok(())
         }
         Command::Whoami => whoami(&client, &creds.source, cli.json, cli.plain).await,

@@ -4,7 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::Result;
 use rusqlite::{params, Connection};
 
-use crate::models::{Author, Tweet};
+use crate::models::{Author, Profile, Tweet};
 
 // Normalized tweet archive. profiles is keyed by the stable X user id; handle is
 // deliberately not unique because X recycles handles across ids over time.
@@ -54,6 +54,26 @@ CREATE TABLE IF NOT EXISTS tweet_collections (
     source text not null default 'kicau',
     updated_at text not null,
     primary key (account_id, tweet_id, kind)
+);
+CREATE TABLE IF NOT EXISTS follow_edges (
+    account_id text not null,
+    direction text not null,
+    profile_id text not null,
+    handle text not null,
+    first_seen_at text not null,
+    updated_at text not null,
+    primary key (account_id, direction, profile_id)
+);
+CREATE TABLE IF NOT EXISTS profile_snapshots (
+    profile_id text not null,
+    observed_at text not null,
+    handle text not null,
+    display_name text not null,
+    bio text not null,
+    followers_count integer not null default 0,
+    following_count integer not null default 0,
+    location text,
+    primary key (profile_id, observed_at)
 );
 ";
 
@@ -117,6 +137,42 @@ impl Db {
         Ok(saved)
     }
 
+    /// Record a follow-graph snapshot: upsert the profiles and their edges.
+    pub fn save_follow_edges(&mut self, account_id: &str, direction: &str, profiles: &[Profile]) -> Result<usize> {
+        let now = now_secs().to_string();
+        let tx = self.conn.transaction()?;
+        let mut saved = 0;
+        for p in profiles {
+            if p.id.is_empty() {
+                continue;
+            }
+            upsert_profile(&tx, p, &now)?;
+            tx.execute(
+                "INSERT INTO follow_edges(account_id, direction, profile_id, handle, first_seen_at, updated_at)
+                 VALUES(?1, ?2, ?3, ?4, ?5, ?5)
+                 ON CONFLICT(account_id, direction, profile_id) DO UPDATE SET handle=excluded.handle, updated_at=excluded.updated_at",
+                params![account_id, direction, p.id, p.handle, now],
+            )?;
+            saved += 1;
+        }
+        tx.commit()?;
+        Ok(saved)
+    }
+
+    /// Upsert a profile and append a point-in-time snapshot of its metrics.
+    pub fn save_profile(&mut self, p: &Profile) -> Result<()> {
+        let now = now_secs().to_string();
+        let tx = self.conn.transaction()?;
+        upsert_profile(&tx, p, &now)?;
+        tx.execute(
+            "INSERT OR REPLACE INTO profile_snapshots(profile_id, observed_at, handle, display_name, bio, followers_count, following_count, location)
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![p.id, now, p.handle, p.name, p.bio, p.followers, p.following, p.location],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Row counts and on-disk size of the local store.
     pub fn stats(&self) -> Result<Stats> {
         let count = |sql: &str| -> Result<i64> { Ok(self.conn.query_row(sql, [], |r| r.get(0))?) };
@@ -126,6 +182,7 @@ impl Db {
             tweets: count("SELECT count(*) FROM tweets")?,
             profiles: count("SELECT count(*) FROM profiles")?,
             collections: count("SELECT count(*) FROM tweet_collections")?,
+            edges: count("SELECT count(*) FROM follow_edges")?,
             bytes: page_count * page_size,
         })
     }
@@ -159,7 +216,21 @@ pub struct Stats {
     pub tweets: i64,
     pub profiles: i64,
     pub collections: i64,
+    pub edges: i64,
     pub bytes: i64,
+}
+
+/// Upsert a full profile row (id, handle, name, bio, follower counts, location).
+fn upsert_profile(tx: &rusqlite::Transaction, p: &Profile, now: &str) -> rusqlite::Result<()> {
+    tx.execute(
+        "INSERT INTO profiles(id, handle, display_name, bio, followers_count, following_count, location, created_at)
+         VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+         ON CONFLICT(id) DO UPDATE SET handle=excluded.handle, display_name=excluded.display_name,
+             bio=excluded.bio, followers_count=excluded.followers_count,
+             following_count=excluded.following_count, location=excluded.location",
+        params![p.id, p.handle, p.name, p.bio, p.followers, p.following, p.location, now],
+    )?;
+    Ok(())
 }
 
 /// Upsert one tweet + its author + FTS entry. Returns false (skipped) when the
