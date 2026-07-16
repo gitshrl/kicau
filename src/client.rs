@@ -16,6 +16,26 @@ pub enum Call {
     Write,
 }
 
+/// Operations whose payloads can carry an article. Without the toggle X returns
+/// only the article's title and preview blurb; with it, the full body arrives as
+/// `plain_text`. X rejects toggles an operation does not declare, so this stays
+/// an explicit list rather than a blanket header.
+const ARTICLE_OPS: &[&str] = &[
+    "TweetDetail",
+    "SearchTimeline",
+    "UserTweets",
+    "HomeLatestTimeline",
+    "Bookmarks",
+    "ListLatestTweetsTimeline",
+    "Likes",
+];
+
+fn field_toggles(operation: &str) -> Option<Value> {
+    ARTICLE_OPS
+        .contains(&operation)
+        .then(|| serde_json::json!({ "withArticlePlainText": true }))
+}
+
 #[derive(Debug, thiserror::Error)]
 enum GqlError {
     #[error("HTTP {status}: {body}")]
@@ -168,18 +188,30 @@ impl TwitterClient {
         call: Call,
     ) -> std::result::Result<Value, GqlError> {
         let url = format!("{TWITTER_API_BASE}/{query_id}/{operation}");
+        let toggles = field_toggles(operation);
         let req = match call {
             // Read: GET with variables + features in the query string.
-            Call::Read => self.http.get(&url).query(&[
-                ("variables", variables.to_string()),
-                ("features", features.to_string()),
-            ]),
+            Call::Read => {
+                let mut req = self.http.get(&url).query(&[
+                    ("variables", variables.to_string()),
+                    ("features", features.to_string()),
+                ]);
+                if let Some(toggles) = &toggles {
+                    req = req.query(&[("fieldToggles", toggles.to_string())]);
+                }
+                req
+            }
             // Search: POST with variables in the query string, features + queryId in the body.
-            Call::Search => self
-                .http
-                .post(&url)
-                .query(&[("variables", variables.to_string())])
-                .json(&serde_json::json!({ "features": features, "queryId": query_id })),
+            Call::Search => {
+                let mut body = serde_json::json!({ "features": features, "queryId": query_id });
+                if let Some(toggles) = &toggles {
+                    body["fieldToggles"] = toggles.clone();
+                }
+                self.http
+                    .post(&url)
+                    .query(&[("variables", variables.to_string())])
+                    .json(&body)
+            }
             // Write: POST with everything in the body. Action mutations (like,
             // retweet, bookmark) send no features — omit the key when null.
             Call::Write => {
@@ -929,5 +961,17 @@ mod tests {
         assert!(is_transient("Dependency: Timedout"));
         assert!(!is_transient("Could not authenticate you."));
         assert!(!is_transient("Bad guest token"));
+    }
+
+    #[test]
+    fn article_toggle_only_for_operations_that_declare_it() {
+        assert_eq!(
+            field_toggles("TweetDetail"),
+            Some(serde_json::json!({ "withArticlePlainText": true }))
+        );
+        assert!(field_toggles("Bookmarks").is_some());
+        // User and mutation operations reject a toggle they never declared.
+        assert!(field_toggles("UserByScreenName").is_none());
+        assert!(field_toggles("CreateTweet").is_none());
     }
 }

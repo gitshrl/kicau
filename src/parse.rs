@@ -226,12 +226,13 @@ pub fn tweets_from_instructions(instructions: &Value) -> Vec<Tweet> {
     tweets
 }
 
-/// Title + preview for an article tweet. ponytail: full draft.js content_state
-/// rendering is out of scope; preview_text is what this response carries.
+/// Title + body for an article tweet. `plain_text` is the whole article, sent
+/// only when the request carries the `withArticlePlainText` toggle; preview_text
+/// is the blurb X falls back to when it withholds the body.
 fn article_text(result: &Value) -> Option<String> {
     let article = result.pointer("/article/article_results/result")?;
     let title = str_at(article, "/title").map(|s| s.trim().to_string());
-    let preview = str_at(article, "/preview_text");
+    let preview = str_at(article, "/plain_text").or_else(|| str_at(article, "/preview_text"));
     match (title, preview) {
         (Some(t), Some(p)) => Some(format!("{t}\n\n{p}")),
         (Some(t), None) => Some(t),
@@ -452,6 +453,27 @@ mod tests {
     fn rejects_result_without_author() {
         let no_user = json!({ "rest_id": "9", "legacy": { "full_text": "x" } });
         assert!(map_tweet_result(&no_user).is_none());
+    }
+
+    #[test]
+    fn article_prefers_full_body_over_preview() {
+        let result = json!({
+            "rest_id": "6",
+            "legacy": { "full_text": "https://t.co/stub" },
+            "article": { "article_results": { "result": {
+                "title": "Loops",
+                "preview_text": "There's a lot of talk",
+                "plain_text": "There's a lot of talk about designing loops. Here is the whole piece."
+            } } },
+            "core": { "user_results": { "result": {
+                "legacy": { "screen_name": "claude", "name": "Claude" }
+            } } }
+        });
+        let tweet = map_tweet_result(&result).unwrap();
+        assert_eq!(
+            tweet.text,
+            "Loops\n\nThere's a lot of talk about designing loops. Here is the whole piece."
+        );
     }
 
     #[test]
