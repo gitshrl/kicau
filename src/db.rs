@@ -436,15 +436,21 @@ impl Db {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
-    /// Every tweet filed into one bookmark folder, newest first.
-    pub fn folder_tweets(&self, folder: &str, limit: u32) -> Result<Vec<Tweet>> {
+    /// Every tweet in a named collection, newest first. `kind` is the stored key
+    /// ("bookmarks", "tweets", "folder:AI Engineering").
+    pub fn collection(&self, kind: &str, limit: u32) -> Result<Vec<Tweet>> {
         let sql = format!(
             "{SELECT} JOIN tweet_collections c ON c.tweet_id = t.id
              WHERE c.kind = ?1 ORDER BY t.created_at DESC LIMIT ?2"
         );
         let mut stmt = self.conn.prepare(&sql)?;
-        let rows = stmt.query_map(params![folder_kind(folder), limit], row_to_tweet)?;
+        let rows = stmt.query_map(params![kind, limit], row_to_tweet)?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Every tweet filed into one bookmark folder, newest first.
+    pub fn folder_tweets(&self, folder: &str, limit: u32) -> Result<Vec<Tweet>> {
+        self.collection(&folder_kind(folder), limit)
     }
 
     /// Bookmark folders in the archive, as `(name, tweet count)`.

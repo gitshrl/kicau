@@ -2,6 +2,7 @@ mod client;
 mod config;
 mod db;
 mod extract;
+mod mcp;
 mod models;
 mod output;
 mod parse;
@@ -287,6 +288,8 @@ enum Command {
     },
     /// Dancing cat
     Mania,
+    /// Serve the archive to agents over MCP (stdio)
+    Mcp,
 }
 
 #[derive(Subcommand)]
@@ -330,6 +333,22 @@ async fn run() -> Result<()> {
             return Ok(());
         }
         Command::Mania => return mania_command(),
+        Command::Mcp => {
+            // Only read_tweet calls X; the rest read the archive. Resolve
+            // credentials if they exist, and serve regardless: an agent asking
+            // what you bookmarked should not need a login to get an answer.
+            let client = config::resolve_credentials(cli.auth_token.clone(), cli.ct0.clone())
+                .ok()
+                .and_then(|creds| {
+                    TwitterClient::new(
+                        creds.auth_token,
+                        creds.ct0,
+                        Duration::from_millis(cli.timeout),
+                    )
+                    .ok()
+                });
+            return mcp::serve(client).await;
+        }
         Command::Find {
             query,
             count,
@@ -420,6 +439,7 @@ async fn run() -> Result<()> {
         | Command::Init
         | Command::Config
         | Command::Mania
+        | Command::Mcp
         | Command::Folders { .. }
         | Command::Find { .. }
         | Command::Log { .. }
