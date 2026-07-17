@@ -317,10 +317,14 @@ impl TwitterClient {
                 .join(", ");
             // GraphQL allows errors beside real data, and X uses that: a deep
             // bookmarks page answers "Query: Unspecified" while still carrying a
-            // full page of tweets and the cursor for the next one. Failing here
-            // truncates a 1,671-bookmark timeline at the first hiccup, so the
-            // data wins and only a dataless response is an error.
-            if !has_content(&data) {
+            // full page of tweets and the cursor for the next one. Failing there
+            // truncates a 1,671-bookmark timeline at the first hiccup, so for a
+            // read the data wins and only a dataless response is an error.
+            //
+            // Writes get no such benefit of the doubt. `action` discards the
+            // body, so a tolerated error would report a like or a delete that
+            // never happened — for a write, the error is the result.
+            if matches!(call, Call::Write) || !has_content(&data) {
                 return Err(GqlError::Api(msg));
             }
         }
@@ -1229,6 +1233,24 @@ mod tests {
         // Nothing to salvage: the error is the whole response.
         assert!(!has_content(&serde_json::json!(null)));
         assert!(!has_content(&serde_json::json!({})));
+    }
+
+    #[test]
+    fn only_reads_tolerate_a_partial_response() {
+        // The rule graphql_call applies: tolerate iff the call is not a write and
+        // something came back. `action` throws the body away, so a tolerated error
+        // on a like or a delete would reach the user as success.
+        let tolerated =
+            |call: Call, data: &Value| !matches!(call, Call::Write) && has_content(data);
+        let with_data = serde_json::json!({ "favorite_tweet": "Done" });
+
+        assert!(tolerated(Call::Read, &with_data));
+        assert!(tolerated(Call::Search, &with_data));
+        assert!(
+            !tolerated(Call::Write, &with_data),
+            "a write must surface its error, not swallow it"
+        );
+        assert!(!tolerated(Call::Read, &serde_json::json!({})));
     }
 
     #[test]
