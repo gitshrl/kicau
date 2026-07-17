@@ -478,10 +478,7 @@ impl TwitterClient {
                 Ok(data) => data,
                 Err(e) if tweets.is_empty() => return Err(e),
                 Err(e) => {
-                    eprintln!(
-                        "⚠️  {operation} stopped after {} tweets: {e}",
-                        tweets.len()
-                    );
+                    eprintln!("⚠️  {operation} stopped after {} tweets: {e}", tweets.len());
                     break;
                 }
             };
@@ -498,7 +495,9 @@ impl TwitterClient {
                 break;
             }
 
-            let Some(cursor) = bottom_cursor(&instructions) else { break };
+            let Some(cursor) = bottom_cursor(&instructions) else {
+                break;
+            };
             // At the end of a timeline X hands back the cursor it was given.
             if !seen_cursors.insert(cursor.clone()) {
                 break;
@@ -1225,10 +1224,12 @@ mod tests {
 
     #[test]
     fn bottom_cursor_absent_ends_pagination() {
-        let last_page = serde_json::json!([{ "entries": [{ "entryId": "tweet-1", "content": {} }] }]);
+        let last_page =
+            serde_json::json!([{ "entries": [{ "entryId": "tweet-1", "content": {} }] }]);
         assert_eq!(bottom_cursor(&last_page), None);
         // A cursor entry with no value must not be mistaken for one.
-        let valueless = serde_json::json!([{ "entries": [{ "entryId": "cursor-bottom-1", "content": {} }] }]);
+        let valueless =
+            serde_json::json!([{ "entries": [{ "entryId": "cursor-bottom-1", "content": {} }] }]);
         assert_eq!(bottom_cursor(&valueless), None);
         assert_eq!(bottom_cursor(&serde_json::json!({})), None);
     }
