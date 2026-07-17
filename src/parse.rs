@@ -230,6 +230,64 @@ pub fn users_from_instructions(instructions: &Value) -> Vec<Profile> {
 /// Walk timeline `instructions` (`TweetDetail` or `SearchTimeline` shape) collecting
 /// every tweet. Handles both direct `itemContent` entries and the nested
 /// `items[]` of conversationthread modules.
+/// Ids of the tweets in a timeline that are Articles.
+///
+/// X never hydrates an Article inside a timeline: no `article` block arrives,
+/// whatever `fieldToggles` the request carries, and `full_text` is a bare t.co
+/// stub. The only marker left is the expanded url, which points at
+/// `/i/article/`. Callers re-fetch these one at a time through `TweetDetail`,
+/// which is the only operation that returns the body.
+pub fn article_tweet_ids(instructions: &Value) -> Vec<String> {
+    fn is_article_url(url: &str) -> bool {
+        // Match on the host, not a substring: `notx.com/i/article/1` ends with
+        // the same characters as the real thing.
+        let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
+        let (host, path) = rest.split_once('/').unwrap_or((rest, ""));
+        let host = host.strip_prefix("www.").unwrap_or(host);
+        if host != "x.com" && host != "twitter.com" {
+            return false;
+        }
+        let Some(tail) = path.strip_prefix("i/article/") else {
+            return false;
+        };
+        let id = tail.split(['/', '?', '#']).next().unwrap_or_default();
+        !id.is_empty() && id.chars().all(|c| c.is_ascii_digit())
+    }
+
+    fn walk(value: &Value, out: &mut Vec<String>) {
+        match value {
+            Value::Object(map) => {
+                let is_article = map
+                    .get("legacy")
+                    .map(|legacy| as_array(&legacy["entities"]["urls"]))
+                    .unwrap_or_default()
+                    .iter()
+                    .filter_map(|u| u.get("expanded_url").and_then(Value::as_str))
+                    .any(is_article_url);
+                if is_article
+                    && let Some(id) = map.get("rest_id").and_then(Value::as_str)
+                    && !out.iter().any(|seen| seen == id)
+                {
+                    out.push(id.to_string());
+                }
+                for v in map.values() {
+                    walk(v, out);
+                }
+            }
+            Value::Array(items) => {
+                for v in items {
+                    walk(v, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut out = Vec::new();
+    walk(instructions, &mut out);
+    out
+}
+
 pub fn tweets_from_instructions(instructions: &Value) -> Vec<Tweet> {
     let mut tweets = Vec::new();
     for instruction in as_array(instructions) {
@@ -511,6 +569,51 @@ mod tests {
     fn rejects_result_without_author() {
         let no_user = json!({ "rest_id": "9", "legacy": { "full_text": "x" } });
         assert!(map_tweet_result(&no_user).is_none());
+    }
+
+    #[test]
+    fn article_tweets_are_spotted_by_their_url() {
+        // How a timeline really serves an Article: no `article` block, and the
+        // text is a t.co stub. Only the expanded url gives it away.
+        let timeline = json!([{ "entries": [
+            { "entryId": "tweet-1", "content": { "itemContent": { "tweet_results": { "result": {
+                "rest_id": "1",
+                "legacy": {
+                    "full_text": "https://t.co/E111udBFTy",
+                    "entities": { "urls": [{ "expanded_url": "http://x.com/i/article/2077511961974337536" }] }
+                }
+            } } } } },
+            { "entryId": "tweet-2", "content": { "itemContent": { "tweet_results": { "result": {
+                "rest_id": "2",
+                "legacy": {
+                    "full_text": "a normal link tweet",
+                    "entities": { "urls": [{ "expanded_url": "https://example.com/i/article/nope" }] }
+                }
+            } } } } },
+        ] }]);
+        assert_eq!(article_tweet_ids(&timeline), vec!["1".to_string()]);
+    }
+
+    #[test]
+    fn article_url_lookalikes_are_not_articles() {
+        let cases = [
+            ("https://x.com/i/article/123", true),
+            ("http://twitter.com/i/article/9", true),
+            ("https://x.com/i/articles/123", false), // plural: a different route
+            ("https://x.com/i/article/abc", false),  // no id
+            ("https://x.com/user/status/123", false),
+            ("https://notx.com/i/article/123", false), // must not match by suffix
+        ];
+        for (url, want) in cases {
+            let timeline = json!([{ "entries": [
+                { "entryId": "tweet-1", "content": { "itemContent": { "tweet_results": { "result": {
+                    "rest_id": "1",
+                    "legacy": { "entities": { "urls": [{ "expanded_url": url }] } }
+                } } } } }
+            ] }]);
+            let got = !article_tweet_ids(&timeline).is_empty();
+            assert_eq!(got, want, "{url}");
+        }
     }
 
     #[test]

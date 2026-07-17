@@ -354,7 +354,10 @@ impl TwitterClient {
             .await?;
         let instructions =
             &data["search_by_raw_query"]["search_timeline"]["timeline"]["instructions"];
-        Ok(parse::tweets_from_instructions(instructions))
+        let mut tweets = parse::tweets_from_instructions(instructions);
+        let article_ids = parse::article_tweet_ids(instructions).into_iter().collect();
+        self.hydrate_articles(&mut tweets, &article_ids).await;
+        Ok(tweets)
     }
 
     /// Accounts a user follows.
@@ -492,6 +495,7 @@ impl TwitterClient {
         variables["count"] = Value::from(count.min(PAGE_SIZE));
         let mut tweets = Vec::new();
         let mut seen_cursors = HashSet::new();
+        let mut article_ids = HashSet::new();
 
         loop {
             let data = match self
@@ -507,6 +511,7 @@ impl TwitterClient {
             };
             let instructions = data.pointer(pointer).cloned().unwrap_or(Value::Null);
             let page = parse::tweets_from_instructions(&instructions);
+            article_ids.extend(parse::article_tweet_ids(&instructions));
 
             // An empty page means the timeline is exhausted; without this the
             // cursor can keep resolving and the loop never ends.
@@ -530,7 +535,40 @@ impl TwitterClient {
         }
 
         tweets.truncate(want);
+        self.hydrate_articles(&mut tweets, &article_ids).await;
         Ok(tweets)
+    }
+
+    /// Replace Article stubs with the real thing.
+    ///
+    /// A timeline hands back an Article as a bare t.co link, so anything that
+    /// reads one from a timeline gets 23 characters instead of the piece. Only
+    /// `TweetDetail` returns the body, and only one tweet at a time — X publishes
+    /// no batch equivalent — so this costs one request per Article. A stub that
+    /// fails to hydrate keeps its link rather than disappearing.
+    async fn hydrate_articles(&self, tweets: &mut [Tweet], article_ids: &HashSet<String>) {
+        let targets: Vec<usize> = tweets
+            .iter()
+            .enumerate()
+            .filter(|(_, tweet)| article_ids.contains(&tweet.id))
+            .map(|(i, _)| i)
+            .collect();
+        if targets.is_empty() {
+            return;
+        }
+
+        eprintln!("… fetching {} article bodies", targets.len());
+        let mut failed = 0;
+        for i in targets {
+            match self.get_tweet(&tweets[i].id).await {
+                Ok(full) => tweets[i] = full,
+                Err(_) => failed += 1,
+            }
+            tokio::time::sleep(PAGE_DELAY).await;
+        }
+        if failed > 0 {
+            eprintln!("⚠️  {failed} article(s) kept their link: body could not be fetched");
+        }
     }
 
     /// Delete one of your own tweets.
