@@ -46,6 +46,14 @@ const PAGE_DELAY: Duration = Duration::from_secs(2);
 /// a page size, never the total wanted.
 const PAGE_SIZE: u32 = 100;
 
+/// Whether a tweet's text is nothing but the t.co link X leaves behind when it
+/// declines to hydrate an Article. A hydrated one carries its title and body, so
+/// only a bare link is worth a second request.
+fn is_link_stub(text: &str) -> bool {
+    let text = text.trim();
+    text.starts_with("https://t.co/") && !text.contains(char::is_whitespace)
+}
+
 /// Whether a GraphQL `data` block actually carries something. Null, or an empty
 /// object, means X answered with nothing and any error beside it is the real
 /// result.
@@ -541,16 +549,18 @@ impl TwitterClient {
 
     /// Replace Article stubs with the real thing.
     ///
-    /// A timeline hands back an Article as a bare t.co link, so anything that
-    /// reads one from a timeline gets 23 characters instead of the piece. Only
-    /// `TweetDetail` returns the body, and only one tweet at a time — X publishes
-    /// no batch equivalent — so this costs one request per Article. A stub that
-    /// fails to hydrate keeps its link rather than disappearing.
+    /// X is inconsistent about this. `UserTweets` honours `withArticlePlainText`
+    /// and hands the body over with the timeline; `Bookmarks` ignores the toggle
+    /// and carries no article block at all, leaving a bare t.co link where an
+    /// essay should be. So only the stubs are re-fetched, one `TweetDetail` each
+    /// — X publishes no batch equivalent — and a tweet that already arrived whole
+    /// costs nothing. A stub that fails to hydrate keeps its link rather than
+    /// disappearing.
     async fn hydrate_articles(&self, tweets: &mut [Tweet], article_ids: &HashSet<String>) {
         let targets: Vec<usize> = tweets
             .iter()
             .enumerate()
-            .filter(|(_, tweet)| article_ids.contains(&tweet.id))
+            .filter(|(_, tweet)| article_ids.contains(&tweet.id) && is_link_stub(&tweet.text))
             .map(|(i, _)| i)
             .collect();
         if targets.is_empty() {
@@ -1271,6 +1281,20 @@ mod tests {
         // Nothing to salvage: the error is the whole response.
         assert!(!has_content(&serde_json::json!(null)));
         assert!(!has_content(&serde_json::json!({})));
+    }
+
+    #[test]
+    fn only_bare_links_need_a_second_request() {
+        // Bookmarks leaves this behind where an Article should be.
+        assert!(is_link_stub("https://t.co/E111udBFTy"));
+        assert!(is_link_stub("  https://t.co/E111udBFTy  "));
+        // UserTweets honours the toggle, so the body is already here: fetching
+        // it again would be a wasted request per article.
+        assert!(!is_link_stub(
+            "The writing habit that saved my brain\n\nIf you..."
+        ));
+        assert!(!is_link_stub("look at this https://t.co/E111udBFTy"));
+        assert!(!is_link_stub(""));
     }
 
     #[test]
