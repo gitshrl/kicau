@@ -105,21 +105,6 @@ Run `kicau <command> --help` for options. Every write supports `--dry-run`.
 - `kicau backup export <dir>` writes each table as git-friendly JSONL;
   `backup import <dir>` restores.
 
-### Bookmarks and folders
-
-`kicau sync bookmarks -n 2000` fetches every bookmark, follows X's cursor to the
-end, and pulls in the body of any Article it finds. Articles arrive from some
-timelines as a bare t.co link, so those get fetched individually: expect roughly
-a second per Article on a first run.
-
-It then records which folder each bookmark is filed in, as a label beside the
-bookmark rather than a copy of it. Folder membership mirrors X, so unfile
-something there and the label goes on the next sync. If you keep no folders,
-nothing extra is fetched or written.
-
-The bookmark list itself is a record, not a mirror: unbookmark something in X and
-the archive keeps it.
-
 ## Use from an agent (MCP)
 
 `kicau mcp` serves the archive over the Model Context Protocol on stdio, so an
