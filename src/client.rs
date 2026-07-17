@@ -62,6 +62,18 @@ fn collect_folders(data: &Value, out: &mut Vec<(String, String)>) {
     }
 }
 
+/// Whether this page has reached the already-archived region: it holds at least
+/// one tweet already known.
+///
+/// Bookmarks are ordered newest-first by bookmark time, with promoted content
+/// off, so a new bookmark sits above every archived one. The first already-known
+/// bookmark is therefore the boundary — everything below it is older and already
+/// held — and one is enough to stop. An empty `known` set (the `--all` path, and
+/// every non-bookmark timeline) never reaches known, so it fetches in full.
+fn page_reaches_known(page: &[Tweet], known: &HashSet<String>) -> bool {
+    page.iter().any(|tweet| known.contains(&tweet.id))
+}
+
 /// Whether a tweet's text is nothing but the t.co link X leaves behind when it
 /// declines to hydrate an Article. A hydrated one carries its title and body, so
 /// only a bare link is worth a second request.
@@ -443,6 +455,7 @@ impl TwitterClient {
             read_features(),
             "/user/result/timeline/timeline/instructions",
             count,
+            &HashSet::new(),
         )
         .await
     }
@@ -462,12 +475,16 @@ impl TwitterClient {
             read_features(),
             "/home/home_timeline_urt/instructions",
             count,
+            &HashSet::new(),
         )
         .await
     }
 
     /// The account's bookmarks.
-    pub async fn bookmarks(&self, count: u32) -> Result<Vec<Tweet>> {
+    /// Fetch bookmarks. When `already` holds the ids the archive already has as
+    /// bookmarks, pagination stops at the first page that reaches one; pass an
+    /// empty set to fetch the full timeline.
+    pub async fn bookmarks(&self, count: u32, already: &HashSet<String>) -> Result<Vec<Tweet>> {
         let variables = serde_json::json!({
             "count": count,
             "includePromotedContent": false,
@@ -481,6 +498,7 @@ impl TwitterClient {
             bookmarks_features(),
             "/bookmark_timeline_v2/timeline/instructions",
             count,
+            already,
         )
         .await
     }
@@ -569,6 +587,7 @@ impl TwitterClient {
             read_features(),
             "/list/tweets_timeline/timeline/instructions",
             count,
+            &HashSet::new(),
         )
         .await
     }
@@ -590,6 +609,7 @@ impl TwitterClient {
         features: Value,
         pointer: &str,
         count: u32,
+        already: &HashSet<String>,
     ) -> Result<Vec<Tweet>> {
         let want = count as usize;
         let mut variables = variables;
@@ -613,14 +633,29 @@ impl TwitterClient {
             };
             let instructions = data.pointer(pointer).cloned().unwrap_or(Value::Null);
             let page = parse::tweets_from_instructions(&instructions);
-            article_ids.extend(parse::article_tweet_ids(&instructions));
 
             // An empty page means the timeline is exhausted; without this the
             // cursor can keep resolving and the loop never ends.
             if page.is_empty() {
                 break;
             }
+            // Incremental stop: this whole page is captured first, then if it
+            // reached the already-archived region we stop, since everything below
+            // is older and already held. `already` is empty for every caller but
+            // an incremental bookmark fetch, so this changes nothing elsewhere.
+            let reached_known = page_reaches_known(&page, already);
+            // Only hydrate articles we do not already hold. A known bookmark's
+            // body was fetched on the sync that first recorded it; re-fetching it
+            // is the cost this incremental path exists to avoid.
+            article_ids.extend(
+                parse::article_tweet_ids(&instructions)
+                    .into_iter()
+                    .filter(|id| !already.contains(id)),
+            );
             tweets.extend(page);
+            if reached_known {
+                break;
+            }
             if tweets.len() >= want {
                 break;
             }
@@ -1397,6 +1432,38 @@ mod tests {
         assert!(!has_content(&serde_json::json!({ "a": null })));
         assert!(!has_content(&serde_json::json!({})));
         assert!(!has_content(&serde_json::json!(null)));
+    }
+
+    fn t(id: &str) -> Tweet {
+        Tweet {
+            id: id.into(),
+            text: String::new(),
+            author: crate::models::Author {
+                id: "u".into(),
+                username: "h".into(),
+                name: "n".into(),
+            },
+            created_at: None,
+            reply_count: None,
+            retweet_count: None,
+            like_count: None,
+            conversation_id: None,
+            in_reply_to_status_id: None,
+        }
+    }
+
+    #[test]
+    fn a_page_stops_at_the_first_already_known_bookmark() {
+        let known: HashSet<String> = ["1", "2"].iter().map(ToString::to_string).collect();
+        // A page of only new ids has not reached the archive: keep fetching.
+        assert!(!page_reaches_known(&[t("8"), t("9")], &known));
+        // A known id anywhere on the page means we have reached the boundary; the
+        // whole page (including new ids above it) is captured, then we stop.
+        assert!(page_reaches_known(&[t("9"), t("1")], &known));
+        // Empty page: not a stop here (the caller ends on an empty page).
+        assert!(!page_reaches_known(&[], &known));
+        // Nothing known (the --all case): never stop, fetch in full.
+        assert!(!page_reaches_known(&[t("1")], &HashSet::new()));
     }
 
     #[test]

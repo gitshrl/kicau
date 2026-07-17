@@ -436,6 +436,19 @@ impl Db {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
+    /// The ids already recorded as bookmarks for an account.
+    ///
+    /// Keyed on collection membership, not on the `tweets` table: a tweet the
+    /// archive holds from some other timeline is not a bookmark until it is one
+    /// here. The incremental fetch uses this to know where it can stop.
+    pub fn bookmark_ids(&self, account_id: &str) -> Result<std::collections::HashSet<String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT tweet_id FROM tweet_collections WHERE account_id = ?1 AND kind = 'bookmarks'",
+        )?;
+        let rows = stmt.query_map(params![account_id], |r| r.get::<_, String>(0))?;
+        Ok(rows.collect::<rusqlite::Result<std::collections::HashSet<_>>>()?)
+    }
+
     /// Every tweet in a named collection, newest first. `kind` is the stored key
     /// ("bookmarks", "tweets", "folder:AI Engineering").
     pub fn collection(&self, kind: &str, limit: u32) -> Result<Vec<Tweet>> {
@@ -946,6 +959,64 @@ mod tests {
                 .unwrap()
                 .len(),
             1
+        );
+    }
+
+    #[test]
+    fn bookmark_ids_are_the_bookmarked_ones_not_merely_archived() {
+        // The correctness the incremental stop rests on: "already seen" must mean
+        // "already a bookmark", not "the tweet exists in the archive". A tweet
+        // archived via another path but freshly bookmarked is NOT yet a bookmark,
+        // so the incremental fetch must still reach and record it.
+        let mut db = db();
+        db.archive(&[tweet(
+            "1",
+            "u1",
+            "a",
+            "seen in home only",
+            "2026-07-01T00:00:00.000Z",
+        )])
+        .unwrap();
+        db.archive_collection(
+            &[tweet(
+                "2",
+                "u2",
+                "b",
+                "an actual bookmark",
+                "2026-07-02T00:00:00.000Z",
+            )],
+            "me",
+            "bookmarks",
+        )
+        .unwrap();
+
+        let ids = db.bookmark_ids("me").unwrap();
+        assert!(ids.contains("2"), "the bookmarked tweet is included");
+        assert!(
+            !ids.contains("1"),
+            "a merely-archived tweet is NOT a bookmark"
+        );
+        assert_eq!(ids.len(), 1);
+    }
+
+    #[test]
+    fn bookmark_ids_are_scoped_to_the_account() {
+        let mut db = db();
+        db.archive_collection(
+            &[tweet("1", "u1", "a", "mine", "2026-07-01T00:00:00.000Z")],
+            "me",
+            "bookmarks",
+        )
+        .unwrap();
+        db.archive_collection(
+            &[tweet("2", "u2", "b", "yours", "2026-07-02T00:00:00.000Z")],
+            "you",
+            "bookmarks",
+        )
+        .unwrap();
+        assert_eq!(
+            db.bookmark_ids("me").unwrap(),
+            std::collections::HashSet::from(["1".to_string()])
         );
     }
 

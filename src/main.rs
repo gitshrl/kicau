@@ -9,6 +9,7 @@ mod parse;
 mod query;
 mod transaction;
 
+use std::collections::HashSet;
 use std::fmt::Write as _;
 use std::time::Duration;
 
@@ -112,13 +113,6 @@ enum Command {
         /// Tweet id or URL
         tweet: String,
     },
-    /// Fetch a live collection and persist it into the local SQLite store
-    Sync {
-        /// What to sync: bookmarks | tweets
-        what: String,
-        #[arg(short = 'n', long, default_value_t = 100)]
-        limit: u32,
-    },
     /// Snapshot a user's follow graph into the local store
     Graph {
         /// Direction: following | followers
@@ -186,10 +180,10 @@ enum Command {
         /// @handle (with or without @)
         handle: String,
     },
-    /// Show a user's tweets
-    UserTweets {
-        /// @handle (with or without @)
-        handle: String,
+    /// Show tweets: yours by default, or another user's with a handle
+    Tweets {
+        /// @handle (with or without @); omit for your own tweets
+        handle: Option<String>,
         #[arg(short = 'n', long, default_value_t = 20)]
         count: u32,
     },
@@ -198,10 +192,14 @@ enum Command {
         #[arg(short = 'n', long, default_value_t = 20)]
         count: u32,
     },
-    /// Show your bookmarks
+    /// Sync your bookmarks (incremental) and show the newest; archives to SQLite
     Bookmarks {
+        /// How many to display from the archive
         #[arg(short = 'n', long, default_value_t = 20)]
         count: u32,
+        /// Re-fetch every bookmark instead of stopping at ones already archived
+        #[arg(long)]
+        all: bool,
     },
     /// Show a list's tweets by list id
     List {
@@ -446,31 +444,6 @@ async fn run() -> Result<()> {
         | Command::Db { .. }
         | Command::Backup { .. }
         | Command::Import { .. } => unreachable!("handled above"),
-        Command::Sync { what, limit } => {
-            let user = client.current_user().await?;
-            let tweets = match what.as_str() {
-                "bookmarks" => client.bookmarks(limit).await?,
-                "tweets" => client.user_tweets(&user.username, limit).await?,
-                other => {
-                    return Err(anyhow!(
-                        "unknown sync target '{other}' (use: bookmarks | tweets)"
-                    ));
-                }
-            };
-            let mut db = db::Db::open_default()?;
-            // Additive on purpose, unlike the folder pass below, which mirrors X.
-            // The collection is a record of everything you ever saved: unbookmark
-            // something in X and the archive keeps it. Making this mirror X too
-            // would look consistent and quietly delete history — and X reports a
-            // slightly different total run to run, so a short read would take real
-            // bookmarks with it.
-            let saved = db.archive_collection(&tweets, &user.id, &what)?;
-            println!("✅ synced {saved} {what} into the local store");
-            if what == "bookmarks" {
-                sync_bookmark_folders(&client, &mut db, &user.id).await;
-            }
-            Ok(())
-        }
         Command::Graph {
             direction,
             handle,
@@ -615,7 +588,11 @@ async fn run() -> Result<()> {
             output::print_profile(&profile, cli.json, cli.plain);
             Ok(())
         }
-        Command::UserTweets { handle, count } => {
+        Command::Tweets { handle, count } => {
+            let handle = match handle {
+                Some(handle) => handle,
+                None => client.current_user().await?.username,
+            };
             let tweets = client.user_tweets(&handle, count).await?;
             output::print_tweets(&tweets, cli.json, cli.plain, "No tweets found.");
             archive(&tweets, cli.no_db);
@@ -627,10 +604,33 @@ async fn run() -> Result<()> {
             archive(&tweets, cli.no_db);
             Ok(())
         }
-        Command::Bookmarks { count } => {
-            let tweets = client.bookmarks(count).await?;
-            output::print_tweets(&tweets, cli.json, cli.plain, "No bookmarks found.");
-            archive(&tweets, cli.no_db);
+        Command::Bookmarks { count, all } => {
+            // --no-db: a live view, no archive, no folders, no incremental (the
+            // stop needs the archive to compare against). Fetch `count` and show.
+            if cli.no_db {
+                let tweets = client.bookmarks(count, &HashSet::new()).await?;
+                output::print_tweets(&tweets, cli.json, cli.plain, "No bookmarks found.");
+                return Ok(());
+            }
+            let user = client.current_user().await?;
+            let mut db = db::Db::open_default()?;
+            // Known bookmarks stop the fetch early; an empty set (first sync, or
+            // --all) fetches the whole timeline.
+            let known = if all {
+                std::collections::HashSet::new()
+            } else {
+                db.bookmark_ids(&user.id)?
+            };
+            let fetched = client.bookmarks(u32::MAX, &known).await?;
+            // Additive on purpose, unlike the folder pass, which mirrors X. The
+            // collection records everything you ever bookmarked: unbookmark
+            // something in X and the archive keeps it.
+            db.archive_collection(&fetched, &user.id, "bookmarks")?;
+            sync_bookmark_folders(&client, &mut db, &user.id).await;
+            // Show the newest from the archive, so a caught-up sync that fetched
+            // nothing new still displays your recent bookmarks.
+            let newest = db.collection("bookmarks", count)?;
+            output::print_tweets(&newest, cli.json, cli.plain, "No bookmarks archived yet.");
             Ok(())
         }
         Command::List { list, count } => {
