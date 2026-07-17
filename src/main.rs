@@ -438,6 +438,12 @@ async fn run() -> Result<()> {
                 }
             };
             let mut db = db::Db::open_default()?;
+            // Additive on purpose, unlike the folder pass below, which mirrors X.
+            // The collection is a record of everything you ever saved: unbookmark
+            // something in X and the archive keeps it. Making this mirror X too
+            // would look consistent and quietly delete history — and X reports a
+            // slightly different total run to run, so a short read would take real
+            // bookmarks with it.
             let saved = db.archive_collection(&tweets, &user.id, &what)?;
             println!("✅ synced {saved} {what} into the local store");
             if what == "bookmarks" {
