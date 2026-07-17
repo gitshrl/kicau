@@ -163,6 +163,16 @@ enum Command {
         /// Max results
         #[arg(short = 'n', long, default_value_t = 20)]
         count: u32,
+        /// Only search inside this bookmark folder
+        #[arg(long)]
+        folder: Option<String>,
+    },
+    /// List your bookmark folders and what is filed in them
+    Folders {
+        /// Show the tweets in one folder instead of the list
+        folder: Option<String>,
+        #[arg(short = 'n', long, default_value_t = 20)]
+        count: u32,
     },
     /// Show the most recently archived tweets
     Log {
@@ -320,9 +330,28 @@ async fn run() -> Result<()> {
             return Ok(());
         }
         Command::Mania => return mania_command(),
-        Command::Find { query, count } => {
-            let tweets = db::Db::open_default()?.find(query, *count)?;
+        Command::Find {
+            query,
+            count,
+            folder,
+        } => {
+            let db = db::Db::open_default()?;
+            let tweets = match folder {
+                Some(name) => db.find_in_folder(query, name, *count)?,
+                None => db.find(query, *count)?,
+            };
             output::print_tweets(&tweets, cli.json, cli.plain, "No matching tweets archived.");
+            return Ok(());
+        }
+        Command::Folders { folder, count } => {
+            let db = db::Db::open_default()?;
+            match folder {
+                Some(name) => {
+                    let tweets = db.folder_tweets(name, *count)?;
+                    output::print_tweets(&tweets, cli.json, cli.plain, "Nothing filed there.");
+                }
+                None => print_folders(&db.folders()?, cli.json)?,
+            }
             return Ok(());
         }
         Command::Log { count } => {
@@ -391,6 +420,7 @@ async fn run() -> Result<()> {
         | Command::Init
         | Command::Config
         | Command::Mania
+        | Command::Folders { .. }
         | Command::Find { .. }
         | Command::Log { .. }
         | Command::Db { .. }
@@ -410,6 +440,9 @@ async fn run() -> Result<()> {
             let mut db = db::Db::open_default()?;
             let saved = db.archive_collection(&tweets, &user.id, &what)?;
             println!("✅ synced {saved} {what} into the local store");
+            if what == "bookmarks" {
+                sync_bookmark_folders(&client, &mut db, &user.id).await;
+            }
             Ok(())
         }
         Command::Graph {
@@ -1005,7 +1038,65 @@ fn mania_command() -> Result<()> {
     Ok(())
 }
 
-/// Show where things live and where credentials resolve from.
+/// Record which bookmark folder each tweet was filed into, as a `folder:<name>`
+/// collection beside the flat `bookmarks` one.
+///
+/// The tweets are already archived by the bookmarks pass — a folder is a label X
+/// keeps over the same bookmarks — so this only writes labels, never tweets.
+///
+/// Each folder's membership is replaced with what X reports, which is why the
+/// read is all-or-nothing: a short answer would look like the rest were unfiled
+/// and delete them. The sync's `-n` deliberately does not reach here. A folder
+/// that fails to read is reported and skipped, keeping its previous labels —
+/// losing a label must never fail a sync that already saved the tweets.
+async fn sync_bookmark_folders(client: &TwitterClient, db: &mut db::Db, account_id: &str) {
+    let folders = match client.bookmark_folders().await {
+        Ok(folders) if folders.is_empty() => return,
+        Ok(folders) => folders,
+        Err(e) => {
+            eprintln!("⚠️  bookmark folders unavailable: {e}");
+            return;
+        }
+    };
+
+    let mut filed = 0;
+    for (id, name) in &folders {
+        match client.bookmark_folder_ids(id).await {
+            Ok(ids) => match db.replace_labels(&ids, account_id, &format!("folder:{name}")) {
+                Ok(n) => filed += n,
+                Err(e) => eprintln!("⚠️  could not record folder '{name}': {e}"),
+            },
+            Err(e) => eprintln!("⚠️  could not read folder '{name}': {e}"),
+        }
+    }
+    println!(
+        "✅ labelled {filed} bookmark(s) across {} folder(s)",
+        folders.len()
+    );
+}
+
+/// The folder list: the labels you chose in X, with how many tweets each holds.
+fn print_folders(folders: &[(String, i64)], json: bool) -> Result<()> {
+    if json {
+        let rows: Vec<_> = folders
+            .iter()
+            .map(|(name, n)| serde_json::json!({ "folder": name, "tweets": n }))
+            .collect();
+        println!("{}", serde_json::to_string(&rows)?);
+        return Ok(());
+    }
+    if folders.is_empty() {
+        println!("No bookmark folders archived yet. Run: kicau sync bookmarks");
+        return Ok(());
+    }
+    let width = folders.iter().map(|(n, _)| n.len()).max().unwrap_or(0);
+    for (name, count) in folders {
+        println!("  {name:width$}  {count:>4}");
+    }
+    Ok(())
+}
+
+/// Show where things live and where credentials resolve from./// Show where things live and where credentials resolve from.
 fn config_command(json: bool) {
     let state = config::state_dir();
     let config_file = config::config_toml_path();

@@ -46,6 +46,22 @@ const PAGE_DELAY: Duration = Duration::from_secs(2);
 /// a page size, never the total wanted.
 const PAGE_SIZE: u32 = 100;
 
+/// Pull `(id, name)` out of a `BookmarkFoldersSlice` payload.
+fn collect_folders(data: &Value, out: &mut Vec<(String, String)>) {
+    let items = data
+        .pointer("/viewer/user_results/result/bookmark_collections_slice/items")
+        .and_then(Value::as_array);
+    for item in items.into_iter().flatten() {
+        let (Some(id), Some(name)) = (
+            item.get("id").and_then(Value::as_str),
+            item.get("name").and_then(Value::as_str),
+        ) else {
+            continue;
+        };
+        out.push((id.to_string(), name.to_string()));
+    }
+}
+
 /// Whether a tweet's text is nothing but the t.co link X leaves behind when it
 /// declines to hydrate an Article. A hydrated one carries its title and body, so
 /// only a bare link is worth a second request.
@@ -54,13 +70,16 @@ fn is_link_stub(text: &str) -> bool {
     text.starts_with("https://t.co/") && !text.contains(char::is_whitespace)
 }
 
-/// Whether a GraphQL `data` block actually carries something. Null, or an empty
-/// object, means X answered with nothing and any error beside it is the real
-/// result.
+/// Whether a GraphQL `data` block actually carries something.
+///
+/// X answers a failed read with the requested field present but null —
+/// `{"bookmark_collection_timeline": null}` beside an error — so a non-empty map
+/// is not proof of an answer. Every value being null means nothing resolved, and
+/// the error beside it is the real result.
 fn has_content(data: &Value) -> bool {
     match data {
         Value::Null => false,
-        Value::Object(map) => !map.is_empty(),
+        Value::Object(map) => map.values().any(|value| !value.is_null()),
         _ => true,
     }
 }
@@ -464,6 +483,81 @@ impl TwitterClient {
             count,
         )
         .await
+    }
+
+    /// The account's bookmark folders, as `(id, name)`.
+    ///
+    /// Folders are a label over the same bookmarks, not a separate store: every
+    /// tweet in one also arrives in the main bookmarks timeline. Empty when the
+    /// account files nothing, which is not an error.
+    pub async fn bookmark_folders(&self) -> Result<Vec<(String, String)>> {
+        let data = self
+            .fetch_graphql(
+                "BookmarkFoldersSlice",
+                serde_json::json!({}),
+                serde_json::json!({}),
+                Call::Read,
+            )
+            .await?;
+        let mut folders = Vec::new();
+        collect_folders(&data, &mut folders);
+        Ok(folders)
+    }
+
+    /// Every tweet id filed into one bookmark folder.
+    ///
+    /// Ids, not tweets: a folder is a label over bookmarks the main timeline has
+    /// already archived in full. Reading the tweets here would fetch each Article
+    /// a second time and then write the folder's stub text over the body that
+    /// pass just retrieved.
+    ///
+    /// Deliberately takes no count. The caller replaces a folder's whole
+    /// membership with what this returns, so a partial answer would read as
+    /// "the rest were unfiled" and delete them. There is no limit to get wrong:
+    /// this returns the folder entire, or it returns an error.
+    pub async fn bookmark_folder_ids(&self, folder_id: &str) -> Result<Vec<String>> {
+        let mut ids: Vec<String> = Vec::new();
+        let mut seen_cursors = HashSet::new();
+        let mut cursor: Option<String> = None;
+
+        loop {
+            let mut variables = serde_json::json!({
+                "bookmark_collection_id": folder_id,
+                "count": PAGE_SIZE,
+            });
+            if let Some(cursor) = &cursor {
+                variables["cursor"] = Value::String(cursor.clone());
+            }
+            let data = self
+                .fetch_graphql(
+                    "BookmarkFolderTimeline",
+                    variables,
+                    bookmarks_features(),
+                    Call::Read,
+                )
+                .await?;
+            // A missing timeline is a failed read, not an empty folder. Saying
+            // "empty" here would hand the caller an empty list to delete with.
+            let instructions = data
+                .pointer("/bookmark_collection_timeline/timeline/instructions")
+                .ok_or_else(|| anyhow!("no timeline in the response for folder {folder_id}"))?
+                .clone();
+            let page = parse::tweets_from_instructions(&instructions);
+            if page.is_empty() {
+                break;
+            }
+            ids.extend(page.into_iter().map(|tweet| tweet.id));
+            let Some(next) = bottom_cursor(&instructions) else {
+                break;
+            };
+            if !seen_cursors.insert(next.clone()) {
+                break;
+            }
+            cursor = Some(next);
+            tokio::time::sleep(PAGE_DELAY).await;
+        }
+
+        Ok(ids)
     }
 
     /// A list's latest tweets.
@@ -1281,6 +1375,28 @@ mod tests {
         // Nothing to salvage: the error is the whole response.
         assert!(!has_content(&serde_json::json!(null)));
         assert!(!has_content(&serde_json::json!({})));
+    }
+
+    #[test]
+    fn a_null_field_beside_an_error_is_not_content() {
+        // X answers a failed folder read with the field present but null. Read as
+        // "content", the error gets swallowed, the caller sees an empty folder,
+        // and a membership replace deletes every label in it.
+        let failed_read = serde_json::json!({ "bookmark_collection_timeline": null });
+        assert!(
+            !has_content(&failed_read),
+            "a null field must not pass as an answer"
+        );
+        // A real partial success still survives: the field resolved.
+        let partial = serde_json::json!({
+            "bookmark_timeline_v2": { "timeline": { "instructions": [] } }
+        });
+        assert!(has_content(&partial));
+        // Mixed: something resolved, so the data is worth keeping.
+        assert!(has_content(&serde_json::json!({ "a": null, "b": 1 })));
+        assert!(!has_content(&serde_json::json!({ "a": null })));
+        assert!(!has_content(&serde_json::json!({})));
+        assert!(!has_content(&serde_json::json!(null)));
     }
 
     #[test]
