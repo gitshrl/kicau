@@ -46,6 +46,17 @@ const PAGE_DELAY: Duration = Duration::from_secs(2);
 /// a page size, never the total wanted.
 const PAGE_SIZE: u32 = 100;
 
+/// Whether a GraphQL `data` block actually carries something. Null, or an empty
+/// object, means X answered with nothing and any error beside it is the real
+/// result.
+fn has_content(data: &Value) -> bool {
+    match data {
+        Value::Null => false,
+        Value::Object(map) => !map.is_empty(),
+        _ => true,
+    }
+}
+
 /// The cursor for the next page, or None at the end of a timeline.
 ///
 /// X writes cursor entries two ways: timelines put the value straight on
@@ -295,6 +306,7 @@ impl TwitterClient {
             });
         }
         let json: Value = serde_json::from_str(&text)?;
+        let data = json.get("data").cloned().unwrap_or(Value::Null);
         if let Some(errors) = json.get("errors").and_then(Value::as_array)
             && !errors.is_empty()
         {
@@ -303,9 +315,16 @@ impl TwitterClient {
                 .filter_map(|e| e.get("message").and_then(Value::as_str))
                 .collect::<Vec<_>>()
                 .join(", ");
-            return Err(GqlError::Api(msg));
+            // GraphQL allows errors beside real data, and X uses that: a deep
+            // bookmarks page answers "Query: Unspecified" while still carrying a
+            // full page of tweets and the cursor for the next one. Failing here
+            // truncates a 1,671-bookmark timeline at the first hiccup, so the
+            // data wins and only a dataless response is an error.
+            if !has_content(&data) {
+                return Err(GqlError::Api(msg));
+            }
         }
-        Ok(json.get("data").cloned().unwrap_or(Value::Null))
+        Ok(data)
     }
 
     /// Fetch a single tweet by id via `TweetDetail`.
@@ -1196,6 +1215,20 @@ mod tests {
         assert!(is_transient("Dependency: Timedout"));
         assert!(!is_transient("Could not authenticate you."));
         assert!(!is_transient("Bad guest token"));
+    }
+
+    #[test]
+    fn errors_beside_real_data_are_not_fatal() {
+        // A deep bookmarks page: X reports an error and hands over the tweets anyway.
+        let partial =
+            serde_json::json!({ "bookmark_timeline_v2": { "timeline": { "instructions": [] } } });
+        assert!(
+            has_content(&partial),
+            "a populated data block must survive an error"
+        );
+        // Nothing to salvage: the error is the whole response.
+        assert!(!has_content(&serde_json::json!(null)));
+        assert!(!has_content(&serde_json::json!({})));
     }
 
     #[test]
