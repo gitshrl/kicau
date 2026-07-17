@@ -57,6 +57,11 @@ kicau tweet "with a picture" --media photo.png --alt "a description"
 kicau reply <id-or-url> "nice thread"
 kicau like <id> ; kicau retweet <id> ; kicau bookmark <id>
 kicau find "loops" # offline, over your local archive
+
+kicau sync bookmarks -n 2000 # every bookmark, plus which folder each is filed in
+kicau folders # your bookmark folders, and how many are in each
+kicau folders "AI Engineering" # what is filed in one
+kicau find "rust" --folder "AI Engineering" # search inside one folder
 ```
 
 ### Commands
@@ -70,9 +75,10 @@ kicau find "loops" # offline, over your local archive
 `bookmark`/`unbookmark` · `follow`/`unfollow` · `blocks` · `mutes` · `upload`
 
 **Local data**
-`find` (FTS over archived tweets) · `log` (recent archived) · `sync`
-(bookmarks/tweets → SQLite) · `graph` (follow-graph snapshot) · `profiles`
-(profile snapshot) · `db stats` · `backup export|import` · `import` (X data export)
+`find` (FTS over archived tweets, `--folder` to scope it) · `folders` (your
+bookmark folders) · `log` (recent archived) · `sync` (bookmarks/tweets → SQLite) ·
+`graph` (follow-graph snapshot) · `profiles` (profile snapshot) · `db stats` ·
+`backup export|import` · `import` (X data export)
 
 **Setup / maintenance**
 `init` (create config, prompt for cookies) · `config` (show paths and
@@ -97,3 +103,18 @@ Run `kicau <command> --help` for options. Every write supports `--dry-run`.
 - Reads archive by default; `find` and `log` query it with no network.
 - `kicau backup export <dir>` writes each table as git-friendly JSONL;
   `backup import <dir>` restores.
+
+### Bookmarks and folders
+
+`kicau sync bookmarks -n 2000` fetches every bookmark, follows X's cursor to the
+end, and pulls in the body of any Article it finds. Articles arrive from some
+timelines as a bare t.co link, so those get fetched individually: expect roughly
+a second per Article on a first run.
+
+It then records which folder each bookmark is filed in, as a label beside the
+bookmark rather than a copy of it. Folder membership mirrors X, so unfile
+something there and the label goes on the next sync. If you keep no folders,
+nothing extra is fetched or written.
+
+The bookmark list itself is a record, not a mirror: unbookmark something in X and
+the archive keeps it.
