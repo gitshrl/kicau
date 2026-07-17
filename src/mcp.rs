@@ -35,10 +35,20 @@ const JSONRPC_INVALID_PARAMS: i64 = -32602;
 /// archive, so a server with no credentials still answers everything else.
 /// `read_tweet` is the only network tool and the only one that needs cookies.
 pub async fn serve(client: Option<TwitterClient>) -> Result<()> {
-    let mut lines = BufReader::new(tokio::io::stdin()).lines();
+    let mut reader = BufReader::new(tokio::io::stdin());
     let mut stdout = tokio::io::stdout();
+    let mut buf = Vec::new();
 
-    while let Some(msg) = lines.next_line().await? {
+    loop {
+        buf.clear();
+        // Read the raw line rather than `lines()`, which errors out of the whole
+        // session on a non-UTF-8 byte. A lossy decode turns a bad byte into a
+        // replacement char, so the line merely fails to parse and is skipped,
+        // the same as any other garbage.
+        if reader.read_until(b'\n', &mut buf).await? == 0 {
+            break; // EOF: the client closed the pipe.
+        }
+        let msg = String::from_utf8_lossy(&buf);
         let msg = msg.trim();
         if msg.is_empty() {
             continue;

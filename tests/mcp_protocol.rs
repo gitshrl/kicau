@@ -125,6 +125,48 @@ fn error_codes_follow_the_spec() {
 }
 
 #[test]
+fn an_invalid_utf8_byte_does_not_end_the_session() {
+    // A raw non-UTF-8 byte on stdin must not take the server down: the bad line
+    // is skipped and the request after it is still answered. `drive` only sends
+    // valid UTF-8, so this spawns the process directly with raw bytes.
+    let mut child = Command::new(env!("CARGO_BIN_EXE_kicau"))
+        .arg("mcp")
+        .env("HOME", scratch_home())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn kicau mcp");
+    {
+        use std::io::Write as _;
+        let mut stdin = child.stdin.take().unwrap();
+        stdin.write_all(b"\xff\xfe\n").unwrap();
+        stdin
+            .write_all(br#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"archive_stats"}}"#)
+            .unwrap();
+        stdin.write_all(b"\n").unwrap();
+    }
+    let out = child.wait_with_output().expect("wait");
+    assert!(
+        out.status.success(),
+        "a bad byte ended the session: {:?}",
+        out.status
+    );
+    let lines: Vec<Value> = String::from_utf8(out.stdout)
+        .unwrap()
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(
+        lines.len(),
+        1,
+        "the request after the bad byte must be answered"
+    );
+    assert_eq!(lines[0]["id"], 7);
+}
+
+#[test]
 fn a_notification_gets_no_reply_and_garbage_does_not_crash_the_server() {
     let responses = drive(
         &[],
