@@ -32,17 +32,18 @@ const JSONRPC_INVALID_PARAMS: i64 = -32602;
 /// Serve MCP on stdin/stdout until the client closes the pipe.
 ///
 /// `client` is optional: every tool but `read_tweet` answers from the local
-/// archive, so a server with no credentials is still useful.
+/// archive, so a server with no credentials still answers everything else.
+/// `read_tweet` is the only network tool and the only one that needs cookies.
 pub async fn serve(client: Option<TwitterClient>) -> Result<()> {
     let mut lines = BufReader::new(tokio::io::stdin()).lines();
     let mut stdout = tokio::io::stdout();
 
-    while let Some(line) = lines.next_line().await? {
-        let line = line.trim();
-        if line.is_empty() {
+    while let Some(msg) = lines.next_line().await? {
+        let msg = msg.trim();
+        if msg.is_empty() {
             continue;
         }
-        let Ok(request) = serde_json::from_str::<Value>(line) else {
+        let Ok(request) = serde_json::from_str::<Value>(msg) else {
             // A malformed line has no id to answer, so there is nobody to tell.
             eprintln!("kicau mcp: ignoring unparseable line");
             continue;
@@ -337,10 +338,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn every_tool_declares_a_usable_schema() {
+    async fn every_tool_declares_a_usable_schema_and_read_tweet_is_listed() {
         let result = dispatch("tools/list", &json!({}), None).await.ok().unwrap();
         let tools = result["tools"].as_array().unwrap();
         assert_eq!(tools.len(), 5);
+        assert!(
+            tools.iter().any(|t| t["name"] == "read_tweet"),
+            "read_tweet is available by default"
+        );
         for tool in tools {
             assert!(!tool["name"].as_str().unwrap().is_empty());
             assert!(
@@ -370,9 +375,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_tool_that_needs_x_fails_as_a_result_not_an_error() {
-        // read_tweet without credentials ran and could not answer. That is not a
-        // protocol error: the model should see why and pick another tool.
+    async fn read_tweet_without_credentials_asks_for_init() {
+        // read_tweet is the one tool that needs cookies. Without them it ran and
+        // could not answer, which is a result the model can act on, not a
+        // protocol error.
         let out = call_tool(
             &json!({ "name": "read_tweet", "arguments": { "tweet": "1" } }),
             None,

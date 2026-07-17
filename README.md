@@ -82,7 +82,8 @@ bookmark folders) · `log` (recent archived) · `sync` (bookmarks/tweets → SQL
 
 **Setup / maintenance**
 `init` (create config, prompt for cookies) · `config` (show paths and
-credential source) · `whoami` · `check` · `update-query-ids`
+credential source) · `whoami` · `check` · `update-query-ids` · `mcp` (serve the
+archive to agents)
 
 Run `kicau <command> --help` for options. Every write supports `--dry-run`.
 
@@ -118,3 +119,27 @@ nothing extra is fetched or written.
 
 The bookmark list itself is a record, not a mirror: unbookmark something in X and
 the archive keeps it.
+
+## Use from an agent (MCP)
+
+`kicau mcp` serves the archive over the Model Context Protocol on stdio, so an
+agent can query what you have saved. Register it once:
+
+```sh
+claude mcp add kicau -- kicau mcp
+```
+
+It exposes five tools:
+
+- `search_archive`: full-text search, optionally scoped to one bookmark folder
+- `list_bookmarks`: archived bookmarks, or one folder
+- `recent_tweets`: the most recently archived posts
+- `archive_stats`: counts, size, and your bookmark folders
+- `read_tweet`: fetch one post live by id or URL (Article body included), and
+  archive it
+
+The first four read the local archive and touch no network. `read_tweet` is the
+only tool that calls X, using your cookies; without them it says to run
+`kicau init` rather than failing. The surface reads and fetches only: it never
+posts, likes, follows, or deletes, so an agent can read your feed but cannot act
+as you.

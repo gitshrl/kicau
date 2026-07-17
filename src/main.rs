@@ -334,9 +334,9 @@ async fn run() -> Result<()> {
         }
         Command::Mania => return mania_command(),
         Command::Mcp => {
-            // Only read_tweet calls X; the rest read the archive. Resolve
-            // credentials if they exist, and serve regardless: an agent asking
-            // what you bookmarked should not need a login to get an answer.
+            // The archive tools need no credentials; read_tweet does. Resolve
+            // them if present so read_tweet can work, and serve regardless: an
+            // agent asking what you bookmarked should not need a login to answer.
             let client = config::resolve_credentials(cli.auth_token.clone(), cli.ct0.clone())
                 .ok()
                 .and_then(|creds| {
