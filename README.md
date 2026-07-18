@@ -58,7 +58,9 @@ kicau reply <id-or-url> "nice thread"
 kicau like <id> ; kicau retweet <id> ; kicau bookmark <id>
 kicau find "loops" # offline, over your local archive
 
-kicau sync bookmarks -n 2000 # every bookmark, plus which folder each is filed in
+kicau bookmarks # sync new bookmarks to SQLite (incremental) and show the newest
+kicau bookmarks --all # re-fetch every bookmark, not just new ones
+kicau tweets # your own tweets; kicau tweets ClaudeDevs for someone else's
 kicau folders # your bookmark folders, and how many are in each
 kicau folders "AI Engineering" # what is filed in one
 kicau find "rust" --folder "AI Engineering" # search inside one folder
@@ -67,7 +69,7 @@ kicau find "rust" --folder "AI Engineering" # search inside one folder
 ### Commands
 
 **Read**
-`read` · `search` · `mentions` · `replies` · `thread` · `user` · `user-tweets` ·
+`read` · `search` · `mentions` · `replies` · `thread` · `user` · `tweets` ·
 `home` · `bookmarks` · `list` · `dms` · `dm`
 
 **Write**
@@ -76,9 +78,9 @@ kicau find "rust" --folder "AI Engineering" # search inside one folder
 
 **Local data**
 `find` (FTS over archived tweets, `--folder` to scope it) · `folders` (your
-bookmark folders) · `log` (recent archived) · `sync` (bookmarks/tweets → SQLite) ·
-`graph` (follow-graph snapshot) · `profiles` (profile snapshot) · `db stats` ·
-`backup export|import` · `import` (X data export)
+bookmark folders) · `log` (recent archived) · `graph` (follow-graph snapshot) ·
+`profiles` (profile snapshot) · `db stats` · `backup export|import` ·
+`import` (X data export)
 
 **Setup / maintenance**
 `init` (create config, prompt for cookies) · `config` (show paths and

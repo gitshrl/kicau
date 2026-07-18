@@ -196,7 +196,7 @@ async fn run(name: &str, args: &Value, client: Option<&TwitterClient>) -> Result
             };
             Ok(tool_text(&render(
                 &tweets,
-                "No bookmarks archived yet. Run: kicau sync bookmarks",
+                "No bookmarks archived yet. Run: kicau bookmarks",
             )))
         }
         "recent_tweets" => {
