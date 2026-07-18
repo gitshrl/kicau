@@ -1019,7 +1019,7 @@ fn mania_command() -> Result<()> {
     Ok(())
 }
 
-/// Show where things live and where credentials resolve from./// Show where things live and where credentials resolve from.
+/// Show where things live and where credentials resolve from.
 fn config_command(json: bool) {
     let state = config::state_dir();
     let config_file = config::config_toml_path();
