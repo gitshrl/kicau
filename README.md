@@ -1,7 +1,7 @@
 # kicau
 
-A single-binary CLI for X (Twitter) that talks to the private GraphQL API
-using your existing session cookies. No developer app, no OAuth dance. Every
+A CLI for X (Twitter) that talks to the private GraphQL API using your
+existing session cookies. No developer app, no OAuth dance. Every
 tweet it fetches is archived to a local SQLite database and is searchable
 offline.
 
