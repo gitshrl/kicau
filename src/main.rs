@@ -1112,7 +1112,7 @@ fn print_folders(folders: &[(String, i64)], json: bool) -> Result<()> {
         return Ok(());
     }
     if folders.is_empty() {
-        println!("No bookmark folders archived yet. Run: kicau sync bookmarks");
+        println!("No bookmark folders archived yet. Run: kicau bookmarks");
         return Ok(());
     }
     let width = folders.iter().map(|(n, _)| n.len()).max().unwrap_or(0);
