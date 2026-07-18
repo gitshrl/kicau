@@ -45,23 +45,31 @@ Check what resolved with `kicau check`.
 ## Usage
 
 ```sh
-kicau mania # show a cat dancing in ASCII
+# setup
 kicau init # create the config and ask for your cookies
-kicau whoami
-kicau read 2074208949205881033 # id or full URL
+kicau whoami # confirm which account the cookies belong to
+
+# read from X
+kicau read 2074208949205881033 # one post, by id or full URL
 kicau search "rust async"
-kicau user ClaudeDevs
-kicau home -n 30
+kicau user ClaudeDevs # someone's recent posts
+kicau home -n 30 # your home timeline
+kicau tweets # your own posts; kicau tweets ClaudeDevs for someone else's
+kicau bookmarks # sync new bookmarks to SQLite (incremental) and show the newest
+kicau bookmarks -n 50 # show the newest 50 from your archive
+kicau bookmarks --all # re-fetch every bookmark, not just new ones
+
+# write to X (every write takes --dry-run)
 kicau tweet "hello from kicau"
 kicau tweet "with a picture" --media photo.png --alt "a description"
 kicau reply <id-or-url> "nice thread"
 kicau like <id> ; kicau retweet <id> ; kicau bookmark <id>
-kicau find "loops" # offline, over your local archive
 
-kicau bookmarks # sync new bookmarks to SQLite (incremental) and show the newest
-kicau bookmarks -n 50 # show the newest 50 from your archive
-kicau bookmarks --all # re-fetch every bookmark, not just new ones
-kicau tweets # your own tweets; kicau tweets ClaudeDevs for someone else's
+# offline, over your local archive
+kicau find "loops"
+
+# just for fun
+kicau mania # a cat dancing in ASCII
 ```
 
 ### Commands
