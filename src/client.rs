@@ -62,16 +62,17 @@ fn collect_folders(data: &Value, out: &mut Vec<(String, String)>) {
     }
 }
 
-/// Whether this page has reached the already-archived region: it holds at least
-/// one tweet already known.
+/// Whether this whole page is already archived — the incremental stop boundary.
 ///
-/// Bookmarks are ordered newest-first by bookmark time, with promoted content
-/// off, so a new bookmark sits above every archived one. The first already-known
-/// bookmark is therefore the boundary — everything below it is older and already
-/// held — and one is enough to stop. An empty `known` set (the `--all` path, and
-/// every non-bookmark timeline) never reaches known, so it fetches in full.
-fn page_reaches_known(page: &[Tweet], known: &HashSet<String>) -> bool {
-    page.iter().any(|tweet| known.contains(&tweet.id))
+/// Bookmarks come newest-first by bookmark time with promoted content off, so
+/// new bookmarks cluster at the top. A single known id is not the boundary:
+/// re-bookmarking an old tweet gives it a fresh bookmark-time and lifts it above
+/// new bookmarks still waiting on a later page. Only a page with nothing new left
+/// on it means the fetch has paged past the new region. An empty `known` set (the
+/// `--all` path, and every non-bookmark timeline) is never all-known, so it
+/// fetches in full.
+fn page_all_known(page: &[Tweet], known: &HashSet<String>) -> bool {
+    !page.is_empty() && page.iter().all(|tweet| known.contains(&tweet.id))
 }
 
 /// Whether a tweet's text is nothing but the t.co link X leaves behind when it
@@ -639,11 +640,15 @@ impl TwitterClient {
             if page.is_empty() {
                 break;
             }
-            // Incremental stop: this whole page is captured first, then if it
-            // reached the already-archived region we stop, since everything below
-            // is older and already held. `already` is empty for every caller but
-            // an incremental bookmark fetch, so this changes nothing elsewhere.
-            let reached_known = page_reaches_known(&page, already);
+            // Incremental stop: once a whole page is already archived, the fetch
+            // has paged past the new region and everything below is older and
+            // already held. A single known id is not enough — re-bookmarking lifts
+            // an old tweet above new bookmarks on a later page. `already` is empty
+            // for every caller but an incremental bookmark fetch, so this never
+            // stops early elsewhere.
+            if page_all_known(&page, already) {
+                break;
+            }
             // Only hydrate articles we do not already hold. A known bookmark's
             // body was fetched on the sync that first recorded it; re-fetching it
             // is the cost this incremental path exists to avoid.
@@ -653,9 +658,6 @@ impl TwitterClient {
                     .filter(|id| !already.contains(id)),
             );
             tweets.extend(page);
-            if reached_known {
-                break;
-            }
             if tweets.len() >= want {
                 break;
             }
@@ -1453,17 +1455,19 @@ mod tests {
     }
 
     #[test]
-    fn a_page_stops_at_the_first_already_known_bookmark() {
+    fn a_page_stops_only_when_every_id_is_already_known() {
         let known: HashSet<String> = ["1", "2"].iter().map(ToString::to_string).collect();
-        // A page of only new ids has not reached the archive: keep fetching.
-        assert!(!page_reaches_known(&[t("8"), t("9")], &known));
-        // A known id anywhere on the page means we have reached the boundary; the
-        // whole page (including new ids above it) is captured, then we stop.
-        assert!(page_reaches_known(&[t("9"), t("1")], &known));
+        // A page with any new id has not paged past the new region: keep fetching.
+        assert!(!page_all_known(&[t("8"), t("9")], &known));
+        // A known id above new ones — a re-bookmarked old tweet — is not the
+        // boundary: the new ids below it are still unfetched, so keep going.
+        assert!(!page_all_known(&[t("1"), t("9")], &known));
+        // Only a page that is entirely archived stops the fetch.
+        assert!(page_all_known(&[t("1"), t("2")], &known));
         // Empty page: not a stop here (the caller ends on an empty page).
-        assert!(!page_reaches_known(&[], &known));
+        assert!(!page_all_known(&[], &known));
         // Nothing known (the --all case): never stop, fetch in full.
-        assert!(!page_reaches_known(&[t("1")], &HashSet::new()));
+        assert!(!page_all_known(&[t("1")], &HashSet::new()));
     }
 
     #[test]
