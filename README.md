@@ -55,8 +55,8 @@ kicau search "rust async"
 kicau user ClaudeDevs # someone's recent posts
 kicau home -n 30 # your home timeline
 kicau tweets # your own posts; kicau tweets ClaudeDevs for someone else's
-kicau bookmarks # sync new bookmarks to SQLite (incremental) and show the newest
-kicau bookmarks -n 50 # show the newest 50 from your archive
+kicau bookmarks # sync new bookmarks from X to SQLite, show the newest
+kicau bookmarks -n 50 # show 50 (still syncs all new)
 kicau bookmarks --all # re-fetch every bookmark, not just new ones
 
 # write to X (every write takes --dry-run)
