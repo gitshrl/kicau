@@ -449,12 +449,14 @@ impl Db {
         Ok(rows.collect::<rusqlite::Result<std::collections::HashSet<_>>>()?)
     }
 
-    /// Every tweet in a named collection, newest first. `kind` is the stored key
-    /// ("bookmarks", "tweets", "folder:AI Engineering").
+    /// Every tweet in a named collection, most-recently-collected first. `kind` is
+    /// the stored key ("bookmarks", "tweets", "folder:AI Engineering"). Ordering by
+    /// `collected_at` — not the tweet's authored time — keeps a freshly bookmarked
+    /// old tweet at the top where the user expects to see it.
     pub fn collection(&self, kind: &str, limit: u32) -> Result<Vec<Tweet>> {
         let sql = format!(
             "{SELECT} JOIN tweet_collections c ON c.tweet_id = t.id
-             WHERE c.kind = ?1 ORDER BY t.created_at DESC LIMIT ?2"
+             WHERE c.kind = ?1 ORDER BY c.collected_at DESC, t.created_at DESC LIMIT ?2"
         );
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map(params![kind, limit], row_to_tweet)?;
