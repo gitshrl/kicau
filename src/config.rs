@@ -18,8 +18,6 @@ pub const QUERY_IDS: &[(&str, &str)] = &[
     ("UserTweets", "Wms1GvIiHXAPBaCr9KblaA"),
     ("HomeLatestTimeline", "iOEZpOdfekFsxSlPQCQtPg"),
     ("Bookmarks", "RV1g3b8n_SGOHwkqKYSCFw"),
-    ("BookmarkFoldersSlice", "i78YDd0Tza-dV4SYs58kRg"),
-    ("BookmarkFolderTimeline", "nJxjp0AHJCviZ37NzEyqJg"),
     ("ListLatestTweetsTimeline", "2TemLyqrMpTeAmysdbnVqw"),
     ("ListOwnerships", "wQcOSjSQ8NtgxIwvYl1lMg"),
     ("Following", "mWYeougg_ocJS2Vr1Vt28w"),

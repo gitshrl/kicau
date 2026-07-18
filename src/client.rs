@@ -46,22 +46,6 @@ const PAGE_DELAY: Duration = Duration::from_secs(2);
 /// a page size, never the total wanted.
 const PAGE_SIZE: u32 = 100;
 
-/// Pull `(id, name)` out of a `BookmarkFoldersSlice` payload.
-fn collect_folders(data: &Value, out: &mut Vec<(String, String)>) {
-    let items = data
-        .pointer("/viewer/user_results/result/bookmark_collections_slice/items")
-        .and_then(Value::as_array);
-    for item in items.into_iter().flatten() {
-        let (Some(id), Some(name)) = (
-            item.get("id").and_then(Value::as_str),
-            item.get("name").and_then(Value::as_str),
-        ) else {
-            continue;
-        };
-        out.push((id.to_string(), name.to_string()));
-    }
-}
-
 /// Whether this whole page is already archived — the incremental stop boundary.
 ///
 /// Bookmarks come newest-first by bookmark time with promoted content off, so
@@ -86,7 +70,7 @@ fn is_link_stub(text: &str) -> bool {
 /// Whether a GraphQL `data` block actually carries something.
 ///
 /// X answers a failed read with the requested field present but null —
-/// `{"bookmark_collection_timeline": null}` beside an error — so a non-empty map
+/// `{"bookmark_timeline_v2": null}` beside an error — so a non-empty map
 /// is not proof of an answer. Every value being null means nothing resolved, and
 /// the error beside it is the real result.
 fn has_content(data: &Value) -> bool {
@@ -504,81 +488,6 @@ impl TwitterClient {
         .await
     }
 
-    /// The account's bookmark folders, as `(id, name)`.
-    ///
-    /// Folders are a label over the same bookmarks, not a separate store: every
-    /// tweet in one also arrives in the main bookmarks timeline. Empty when the
-    /// account files nothing, which is not an error.
-    pub async fn bookmark_folders(&self) -> Result<Vec<(String, String)>> {
-        let data = self
-            .fetch_graphql(
-                "BookmarkFoldersSlice",
-                serde_json::json!({}),
-                serde_json::json!({}),
-                Call::Read,
-            )
-            .await?;
-        let mut folders = Vec::new();
-        collect_folders(&data, &mut folders);
-        Ok(folders)
-    }
-
-    /// Every tweet id filed into one bookmark folder.
-    ///
-    /// Ids, not tweets: a folder is a label over bookmarks the main timeline has
-    /// already archived in full. Reading the tweets here would fetch each Article
-    /// a second time and then write the folder's stub text over the body that
-    /// pass just retrieved.
-    ///
-    /// Deliberately takes no count. The caller replaces a folder's whole
-    /// membership with what this returns, so a partial answer would read as
-    /// "the rest were unfiled" and delete them. There is no limit to get wrong:
-    /// this returns the folder entire, or it returns an error.
-    pub async fn bookmark_folder_ids(&self, folder_id: &str) -> Result<Vec<String>> {
-        let mut ids: Vec<String> = Vec::new();
-        let mut seen_cursors = HashSet::new();
-        let mut cursor: Option<String> = None;
-
-        loop {
-            let mut variables = serde_json::json!({
-                "bookmark_collection_id": folder_id,
-                "count": PAGE_SIZE,
-            });
-            if let Some(cursor) = &cursor {
-                variables["cursor"] = Value::String(cursor.clone());
-            }
-            let data = self
-                .fetch_graphql(
-                    "BookmarkFolderTimeline",
-                    variables,
-                    bookmarks_features(),
-                    Call::Read,
-                )
-                .await?;
-            // A missing timeline is a failed read, not an empty folder. Saying
-            // "empty" here would hand the caller an empty list to delete with.
-            let instructions = data
-                .pointer("/bookmark_collection_timeline/timeline/instructions")
-                .ok_or_else(|| anyhow!("no timeline in the response for folder {folder_id}"))?
-                .clone();
-            let page = parse::tweets_from_instructions(&instructions);
-            if page.is_empty() {
-                break;
-            }
-            ids.extend(page.into_iter().map(|tweet| tweet.id));
-            let Some(next) = bottom_cursor(&instructions) else {
-                break;
-            };
-            if !seen_cursors.insert(next.clone()) {
-                break;
-            }
-            cursor = Some(next);
-            tokio::time::sleep(PAGE_DELAY).await;
-        }
-
-        Ok(ids)
-    }
-
     /// A list's latest tweets.
     pub async fn list_tweets(&self, list_id: &str, count: u32) -> Result<Vec<Tweet>> {
         let variables = serde_json::json!({ "listId": list_id, "count": count });
@@ -961,14 +870,6 @@ impl TwitterClient {
             return Err(anyhow!("alt-text HTTP {status}: {}", truncate(&b, 200)));
         }
         Ok(())
-    }
-
-    /// Scrape current query ids for the given operations and update the cache.
-    pub async fn refresh_query_ids(
-        &self,
-        operations: &[&str],
-    ) -> Result<std::collections::HashMap<String, String>> {
-        query::force_refresh(&self.http, operations).await
     }
 
     /// Replies to a tweet: conversation tweets whose parent is this id.
@@ -1416,10 +1317,10 @@ mod tests {
 
     #[test]
     fn a_null_field_beside_an_error_is_not_content() {
-        // X answers a failed folder read with the field present but null. Read as
-        // "content", the error gets swallowed, the caller sees an empty folder,
-        // and a membership replace deletes every label in it.
-        let failed_read = serde_json::json!({ "bookmark_collection_timeline": null });
+        // X answers a failed read with the field present but null. Read as
+        // "content", the error gets swallowed and the caller sees an empty result
+        // instead of the failure.
+        let failed_read = serde_json::json!({ "bookmark_timeline_v2": null });
         assert!(
             !has_content(&failed_read),
             "a null field must not pass as an answer"

@@ -183,56 +183,6 @@ impl Db {
         Ok(saved)
     }
 
-    /// Make a collection's membership exactly `ids`.
-    ///
-    /// Touches only `tweet_collections`: the tweets themselves keep whatever
-    /// text they were archived with. That matters for Articles, whose body comes
-    /// from a different request than the timeline that labels them — writing the
-    /// tweet here would replace an essay with the t.co link X ships in its place.
-    /// Ids with no archived tweet are skipped rather than invented.
-    ///
-    /// The old membership is dropped first, so this mirrors the source rather
-    /// than accumulating: unfile a tweet in X and its label goes on the next
-    /// sync. Both halves share one transaction, so a failure part-way leaves the
-    /// previous membership intact rather than a half-emptied folder. Callers
-    /// must pass a folder's *whole* membership — handing over one page would
-    /// delete the rest.
-    pub fn replace_labels(
-        &mut self,
-        ids: &[String],
-        account_id: &str,
-        kind: &str,
-    ) -> Result<usize> {
-        let now = now_secs().to_string();
-        let tx = self.conn.transaction()?;
-        tx.execute(
-            "DELETE FROM tweet_collections WHERE account_id = ?1 AND kind = ?2",
-            params![account_id, kind],
-        )?;
-        let mut labelled = 0;
-        for id in ids {
-            let known = tx
-                .query_row(
-                    "SELECT count(*) FROM tweets WHERE id = ?1",
-                    params![id],
-                    |r| r.get::<_, i64>(0),
-                )
-                .is_ok_and(|n| n > 0);
-            if !known {
-                continue;
-            }
-            tx.execute(
-                "INSERT INTO tweet_collections(account_id, tweet_id, kind, collected_at, source, updated_at)
-                 VALUES(?1, ?2, ?3, ?4, 'kicau', ?5)
-                 ON CONFLICT(account_id, tweet_id, kind) DO UPDATE SET updated_at=excluded.updated_at",
-                params![account_id, id, kind, now, now],
-            )?;
-            labelled += 1;
-        }
-        tx.commit()?;
-        Ok(labelled)
-    }
-
     /// Record a follow-graph snapshot: upsert the profiles and their edges.
     pub fn save_follow_edges(
         &mut self,
@@ -415,27 +365,6 @@ impl Db {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
-    /// Full-text search inside one bookmark folder.
-    ///
-    /// An empty query means "no text filter", so the whole folder comes back.
-    /// Searching nothing everywhere is meaningless and stays empty, but scoped to
-    /// a folder it is the obvious request: show me what is in here.
-    pub fn find_in_folder(&self, query: &str, folder: &str, limit: u32) -> Result<Vec<Tweet>> {
-        let phrase = fts_match(query);
-        if phrase.is_empty() {
-            return self.folder_tweets(folder, limit);
-        }
-        let sql = format!(
-            "{SELECT} JOIN tweets_fts f ON f.tweet_id = t.id
-             JOIN tweet_collections c ON c.tweet_id = t.id
-             WHERE tweets_fts MATCH ?1 AND c.kind = ?2
-             ORDER BY t.created_at DESC LIMIT ?3"
-        );
-        let mut stmt = self.conn.prepare(&sql)?;
-        let rows = stmt.query_map(params![phrase, folder_kind(folder), limit], row_to_tweet)?;
-        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
-    }
-
     /// The ids already recorded as bookmarks for an account.
     ///
     /// Keyed on collection membership, not on the `tweets` table: a tweet the
@@ -450,9 +379,9 @@ impl Db {
     }
 
     /// Every tweet in a named collection, most-recently-collected first. `kind` is
-    /// the stored key ("bookmarks", "tweets", "folder:AI Engineering"). Ordering by
-    /// `collected_at` — not the tweet's authored time — keeps a freshly bookmarked
-    /// old tweet at the top where the user expects to see it.
+    /// the stored key ("bookmarks", "tweets"). Ordering by `collected_at` — not the
+    /// tweet's authored time — keeps a freshly bookmarked old tweet at the top where
+    /// the user expects to see it.
     pub fn collection(&self, kind: &str, limit: u32) -> Result<Vec<Tweet>> {
         let sql = format!(
             "{SELECT} JOIN tweet_collections c ON c.tweet_id = t.id
@@ -463,25 +392,6 @@ impl Db {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
-    /// Every tweet filed into one bookmark folder, newest first.
-    pub fn folder_tweets(&self, folder: &str, limit: u32) -> Result<Vec<Tweet>> {
-        self.collection(&folder_kind(folder), limit)
-    }
-
-    /// Bookmark folders in the archive, as `(name, tweet count)`.
-    pub fn folders(&self) -> Result<Vec<(String, i64)>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT kind, count(*) FROM tweet_collections
-             WHERE kind LIKE 'folder:%' GROUP BY kind ORDER BY count(*) DESC",
-        )?;
-        let rows = stmt.query_map([], |r| {
-            let kind: String = r.get(0)?;
-            let name = kind.strip_prefix("folder:").unwrap_or(&kind).to_string();
-            Ok((name, r.get::<_, i64>(1)?))
-        })?;
-        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
-    }
-
     /// The most recently created archived tweets, newest first.
     pub fn recent(&self, limit: u32) -> Result<Vec<Tweet>> {
         let sql = format!("{SELECT} ORDER BY t.created_at DESC LIMIT ?1");
@@ -489,13 +399,6 @@ impl Db {
         let rows = stmt.query_map(params![limit], row_to_tweet)?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
-}
-
-/// A folder's collection key. The name is the label the user chose in X, kept
-/// readable so a query can say `--folder "AI Engineering"` rather than an id.
-fn folder_kind(folder: &str) -> String {
-    let name = folder.strip_prefix("folder:").unwrap_or(folder);
-    format!("folder:{name}")
 }
 
 pub struct Stats {
@@ -796,172 +699,6 @@ mod tests {
         p.followers = 6; // profile changed
         db.save_profile(&p).unwrap();
         assert_eq!(count(&db), 2, "a changed profile records a new snapshot");
-    }
-
-    #[test]
-    fn labelling_a_folder_never_rewrites_the_tweet() {
-        // The hazard this exists for: an Article is archived with its body from
-        // TweetDetail, then a folder timeline serves the same tweet as a bare
-        // t.co stub. Labelling must attach the folder and leave the body alone.
-        let mut db = db();
-        let article = tweet(
-            "9",
-            "u9",
-            "dankoe",
-            "The writing habit that saved my brain\n\nIf you don't know what to learn...",
-            "2026-07-15T21:58:40.000Z",
-        );
-        db.archive(std::slice::from_ref(&article)).unwrap();
-
-        let labelled = db
-            .replace_labels(&["9".to_string()], "me", "folder:AI Engineering")
-            .unwrap();
-        assert_eq!(labelled, 1);
-
-        let filed = db.folder_tweets("AI Engineering", 10).unwrap();
-        assert_eq!(filed.len(), 1);
-        assert!(
-            filed[0].text.starts_with("The writing habit"),
-            "labelling clobbered the article body: {:?}",
-            filed[0].text
-        );
-        assert_eq!(db.folders().unwrap(), vec![("AI Engineering".into(), 1)]);
-    }
-
-    #[test]
-    fn an_empty_query_lists_the_whole_folder() {
-        let mut db = db();
-        db.archive(&[
-            tweet("1", "u1", "a", "rust ownership", "2026-07-01T00:00:00.000Z"),
-            tweet("2", "u2", "b", "python typing", "2026-07-02T00:00:00.000Z"),
-            tweet("3", "u3", "c", "unfiled thing", "2026-07-03T00:00:00.000Z"),
-        ])
-        .unwrap();
-        db.replace_labels(&["1".into(), "2".into()], "me", "folder:Programming")
-            .unwrap();
-
-        // `kicau find "" --folder Programming` — no text filter, whole folder.
-        assert_eq!(db.find_in_folder("", "Programming", 10).unwrap().len(), 2);
-        assert_eq!(
-            db.find_in_folder("   ", "Programming", 10).unwrap().len(),
-            2
-        );
-        // A text filter still narrows it.
-        assert_eq!(
-            db.find_in_folder("rust", "Programming", 10).unwrap().len(),
-            1
-        );
-        // Searching nothing across everything stays meaningless.
-        assert!(db.find("", 10).unwrap().is_empty());
-    }
-
-    #[test]
-    fn unfiling_a_tweet_in_x_drops_its_label() {
-        // The staleness this replaces: membership used to only ever grow, so a
-        // tweet removed from a folder in X kept its label forever.
-        let mut db = db();
-        db.archive(&[
-            tweet("1", "u1", "a", "stays", "2026-07-01T00:00:00.000Z"),
-            tweet("2", "u2", "b", "gets unfiled", "2026-07-02T00:00:00.000Z"),
-        ])
-        .unwrap();
-        db.replace_labels(&["1".into(), "2".into()], "me", "folder:Investing")
-            .unwrap();
-        assert_eq!(db.folders().unwrap(), vec![("Investing".into(), 2)]);
-
-        // Next sync: X now reports only tweet 1 in the folder.
-        db.replace_labels(&["1".into()], "me", "folder:Investing")
-            .unwrap();
-        let filed = db.folder_tweets("Investing", 10).unwrap();
-        assert_eq!(filed.len(), 1);
-        assert_eq!(filed[0].id, "1");
-        assert_eq!(db.folders().unwrap(), vec![("Investing".into(), 1)]);
-    }
-
-    #[test]
-    fn replacing_one_folder_leaves_every_other_collection_alone() {
-        // The delete is scoped to (account, kind). A blast radius wider than that
-        // would wipe the bookmarks themselves, or another user's folders.
-        let mut db = db();
-        db.archive(&[tweet("1", "u1", "a", "shared", "2026-07-01T00:00:00.000Z")])
-            .unwrap();
-        db.replace_labels(&["1".into()], "me", "bookmarks").unwrap();
-        db.replace_labels(&["1".into()], "me", "folder:Design")
-            .unwrap();
-        db.replace_labels(&["1".into()], "you", "folder:Design")
-            .unwrap();
-
-        // Emptying my Design folder must not touch bookmarks or yours.
-        db.replace_labels(&[], "me", "folder:Design").unwrap();
-        assert!(
-            db.folder_tweets("Design", 10)
-                .unwrap()
-                .iter()
-                .all(|t| t.id != "1")
-                || db.folders().unwrap().iter().any(|(n, _)| n == "Design")
-        );
-        let kinds: Vec<(String, i64)> = db
-            .conn
-            .prepare("SELECT kind || '/' || account_id, count(*) FROM tweet_collections GROUP BY 1 ORDER BY 1")
-            .unwrap()
-            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
-            .unwrap()
-            .collect::<rusqlite::Result<Vec<_>>>()
-            .unwrap();
-        assert_eq!(
-            kinds,
-            vec![
-                ("bookmarks/me".to_string(), 1),
-                ("folder:Design/you".to_string(), 1)
-            ],
-            "the delete reached beyond its own (account, kind)"
-        );
-    }
-
-    #[test]
-    fn labelling_skips_ids_with_no_archived_tweet() {
-        let mut db = db();
-        let n = db
-            .replace_labels(&["nope".to_string()], "me", "folder:Ghost")
-            .unwrap();
-        assert_eq!(n, 0, "a label must not invent a tweet");
-        assert!(db.folders().unwrap().is_empty());
-    }
-
-    #[test]
-    fn folder_search_is_scoped_to_the_folder() {
-        let mut db = db();
-        db.archive(&[
-            tweet(
-                "1",
-                "u1",
-                "a",
-                "rust ownership rules",
-                "2026-07-01T00:00:00.000Z",
-            ),
-            tweet(
-                "2",
-                "u2",
-                "b",
-                "rust async runtimes",
-                "2026-07-02T00:00:00.000Z",
-            ),
-        ])
-        .unwrap();
-        db.replace_labels(&["1".to_string()], "me", "folder:Programming")
-            .unwrap();
-
-        assert_eq!(db.find("rust", 10).unwrap().len(), 2);
-        let scoped = db.find_in_folder("rust", "Programming", 10).unwrap();
-        assert_eq!(scoped.len(), 1);
-        assert_eq!(scoped[0].id, "1");
-        // The folder name is accepted with or without the storage prefix.
-        assert_eq!(
-            db.find_in_folder("rust", "folder:Programming", 10)
-                .unwrap()
-                .len(),
-            1
-        );
     }
 
     #[test]

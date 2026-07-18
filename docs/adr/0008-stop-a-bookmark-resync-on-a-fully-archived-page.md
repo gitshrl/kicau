@@ -4,9 +4,9 @@ Status: Accepted
 
 ## Context
 
-`kicau bookmarks` fetches the bookmarks timeline, archives it, mirrors the
-folder labels, and shows the newest. A re-sync used to page the entire timeline
-every run to re-archive what it already held. The archive is id-keyed and
+`kicau bookmarks` fetches the bookmarks timeline, archives it, and shows the
+newest. A re-sync used to page the entire timeline every run to re-archive what
+it already held. The archive is id-keyed and
 idempotent, so this lost no data — it just spent hundreds of requests to X to
 rediscover bookmarks already on disk. The goal is to fetch less: stop paging
 once the fetch reaches the region it already has.
@@ -66,5 +66,3 @@ and so never stops early.
 - `kicau bookmarks` shows the archive ordered by when each entry was collected,
   not by the tweet's authored time, so a freshly bookmarked old tweet appears at
   the top where you expect it rather than buried among newer-authored posts.
-- Folder labels are still fetched in full and mirrored — the early stop never
-  touches the folder pass, which must see every folder to delete stale labels.

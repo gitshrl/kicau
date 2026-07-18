@@ -59,11 +59,9 @@ kicau like <id> ; kicau retweet <id> ; kicau bookmark <id>
 kicau find "loops" # offline, over your local archive
 
 kicau bookmarks # sync new bookmarks to SQLite (incremental) and show the newest
+kicau bookmarks -n 50 # show the newest 50 from your archive
 kicau bookmarks --all # re-fetch every bookmark, not just new ones
 kicau tweets # your own tweets; kicau tweets ClaudeDevs for someone else's
-kicau folders # your bookmark folders, and how many are in each
-kicau folders "AI Engineering" # what is filed in one
-kicau find "rust" --folder "AI Engineering" # search inside one folder
 ```
 
 ### Commands
@@ -77,15 +75,13 @@ kicau find "rust" --folder "AI Engineering" # search inside one folder
 `bookmark`/`unbookmark` · `follow`/`unfollow` · `blocks` · `mutes` · `upload`
 
 **Local data**
-`find` (FTS over archived tweets, `--folder` to scope it) · `folders` (your
-bookmark folders) · `log` (recent archived) · `graph` (follow-graph snapshot) ·
-`profiles` (profile snapshot) · `db stats` · `backup export|import` ·
-`import` (X data export)
+`find` (FTS over archived tweets) · `log` (recent archived) · `graph`
+(follow-graph snapshot) · `profiles` (profile snapshot) · `db stats` ·
+`backup export|import` · `import` (X data export)
 
 **Setup / maintenance**
 `init` (create config, prompt for cookies) · `config` (show paths and
-credential source) · `whoami` · `check` · `update-query-ids` · `mcp` (serve the
-archive to agents)
+credential source) · `whoami` · `check` · `mcp` (serve the archive to agents)
 
 Run `kicau <command> --help` for options. Every write supports `--dry-run`.
 
@@ -118,10 +114,10 @@ claude mcp add kicau -- kicau mcp
 
 It exposes five tools:
 
-- `search_archive`: full-text search, optionally scoped to one bookmark folder
-- `list_bookmarks`: archived bookmarks, or one folder
+- `search_archive`: full-text search over your archive
+- `list_bookmarks`: archived bookmarks
 - `recent_tweets`: the most recently archived posts
-- `archive_stats`: counts, size, and your bookmark folders
+- `archive_stats`: counts and size
 - `read_tweet`: fetch one post live by id or URL (Article body included), and
   archive it
 

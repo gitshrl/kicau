@@ -62,11 +62,6 @@ Writes never get the benefit of the doubt. For a write, the error *is* the
 result: the operation either happened or it did not, and the body is thrown away
 anyway.
 
-Callers that mirror rather than accumulate get a second guard. `bookmark_folder_ids`
-raises an error when the timeline pointer misses, rather than returning an empty
-list, because "the folder is empty" and "the read failed" must not look alike to
-something holding a `DELETE`.
-
 ## Consequences
 
 - A long backfill survives X's periodic hiccups. On the account this was found on,

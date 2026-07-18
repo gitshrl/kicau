@@ -52,10 +52,6 @@ article_ids.contains(&tweet.id) && is_link_stub(&tweet.text)
 The stub test is what makes the two mechanisms compose instead of duplicate. An
 Article that arrived whole costs nothing; one X withheld costs one request.
 
-Folder labelling is deliberately excluded: it reads ids only. Writing the tweets
-from a folder timeline would overwrite an already-fetched body with the stub that
-timeline serves.
-
 ## Consequences
 
 - Every read path returns Articles whole: `read`, `search`, `home`, `user-tweets`,

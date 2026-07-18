@@ -163,12 +163,7 @@ async fn run(name: &str, args: &Value, client: Option<&TwitterClient>) -> Result
     match name {
         "search_archive" => {
             let db = db::Db::open_default()?;
-            let query = text_arg("query");
-            let folder = args.get("folder").and_then(Value::as_str);
-            let tweets = match folder {
-                Some(folder) => db.find_in_folder(&query, folder, limit(20))?,
-                None => db.find(&query, limit(20))?,
-            };
+            let tweets = db.find(&text_arg("query"), limit(20))?;
             Ok(tool_text(&render(
                 &tweets,
                 "Nothing in the archive matches.",
@@ -190,10 +185,7 @@ async fn run(name: &str, args: &Value, client: Option<&TwitterClient>) -> Result
         }
         "list_bookmarks" => {
             let db = db::Db::open_default()?;
-            let tweets = match args.get("folder").and_then(Value::as_str) {
-                Some(folder) => db.folder_tweets(folder, limit(20))?,
-                None => db.collection("bookmarks", limit(20))?,
-            };
+            let tweets = db.collection("bookmarks", limit(20))?;
             Ok(tool_text(&render(
                 &tweets,
                 "No bookmarks archived yet. Run: kicau bookmarks",
@@ -209,20 +201,14 @@ async fn run(name: &str, args: &Value, client: Option<&TwitterClient>) -> Result
         "archive_stats" => {
             let db = db::Db::open_default()?;
             let s = db.stats()?;
-            let folders = db.folders()?;
             Ok(tool_text(&format!(
-                "tweets: {}\nprofiles: {}\ncollections: {}\nfollow edges: {}\ndms: {}\nsize: {} KiB\nbookmark folders: {}",
+                "tweets: {}\nprofiles: {}\ncollections: {}\nfollow edges: {}\ndms: {}\nsize: {} KiB",
                 s.tweets,
                 s.profiles,
                 s.collections,
                 s.edges,
                 s.dms,
                 s.bytes / 1024,
-                folders
-                    .iter()
-                    .map(|(name, n)| format!("{name} ({n})"))
-                    .collect::<Vec<_>>()
-                    .join(", ")
             )))
         }
         other => Ok(tool_failure(format!("unhandled tool: {other}"))),
@@ -255,13 +241,12 @@ type ToolDef = (&'static str, &'static str, fn() -> Value);
 const TOOLS: &[ToolDef] = &[
     (
         "search_archive",
-        "Full-text search the local kicau archive of X posts. Instant and offline: it never calls X. Covers everything synced, including the full text of long-form Articles. Optionally scope to one bookmark folder.",
+        "Full-text search the local kicau archive of X posts. Instant and offline: it never calls X. Covers everything synced, including the full text of long-form Articles.",
         || {
             json!({
                 "type": "object",
                 "properties": {
-                    "query": { "type": "string", "description": "words to search for; an empty query with a folder returns that whole folder" },
-                    "folder": { "type": "string", "description": "restrict to one bookmark folder, e.g. \"AI Engineering\"" },
+                    "query": { "type": "string", "description": "words to search for" },
                     "limit": { "type": "integer", "description": "max results, 1-200 (default 20)" }
                 },
                 "required": ["query"]
@@ -283,12 +268,11 @@ const TOOLS: &[ToolDef] = &[
     ),
     (
         "list_bookmarks",
-        "List archived bookmarks, newest first, from the local archive. Optionally only those filed in one bookmark folder. Reads nothing from X.",
+        "List archived bookmarks, newest first, from the local archive. Reads nothing from X.",
         || {
             json!({
                 "type": "object",
                 "properties": {
-                    "folder": { "type": "string", "description": "only bookmarks filed in this folder" },
                     "limit": { "type": "integer", "description": "max results, 1-200 (default 20)" }
                 }
             })
@@ -308,7 +292,7 @@ const TOOLS: &[ToolDef] = &[
     ),
     (
         "archive_stats",
-        "What the local archive holds: counts of posts, profiles, collections, DMs, its size on disk, and the bookmark folders with their sizes. Useful for deciding whether search_archive can answer a question.",
+        "What the local archive holds: counts of posts, profiles, collections, DMs, and its size on disk. Useful for deciding whether search_archive can answer a question.",
         || json!({ "type": "object", "properties": {} }),
     ),
 ];
