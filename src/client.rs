@@ -218,6 +218,11 @@ impl TwitterClient {
     /// GraphQL fetch. Resolves the query id by operation name, trying the cached
     /// then baked candidates (X sometimes 404s a freshly-shipped bundle id while
     /// honoring an older one), and self-heals by scraping fresh ids if all 404.
+    /// The shared HTTP client, for downloading media beside the archive.
+    pub(crate) fn http(&self) -> &reqwest::Client {
+        &self.http
+    }
+
     pub async fn fetch_graphql(
         &self,
         operation: &str,

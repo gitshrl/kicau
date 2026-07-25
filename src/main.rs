@@ -3,6 +3,7 @@ mod config;
 mod db;
 mod extract;
 mod mcp;
+mod media;
 mod models;
 mod output;
 mod parse;
@@ -482,20 +483,20 @@ async fn run() -> Result<()> {
             let id = extract::extract_tweet_id(&tweet);
             let tweet = client.get_tweet(&id).await?;
             output::print_tweet(&tweet, cli.json, cli.plain);
-            archive(std::slice::from_ref(&tweet), cli.no_db);
+            archive(&client, std::slice::from_ref(&tweet), cli.no_db).await;
             Ok(())
         }
         Command::Search { query, count } => {
             let tweets = client.search(&query, count).await?;
             output::print_tweets(&tweets, cli.json, cli.plain, "No tweets found.");
-            archive(&tweets, cli.no_db);
+            archive(&client, &tweets, cli.no_db).await;
             Ok(())
         }
         Command::Mentions { count } => {
             let user = client.current_user().await?;
             let tweets = client.search(&format!("@{}", user.username), count).await?;
             output::print_tweets(&tweets, cli.json, cli.plain, "No mentions found.");
-            archive(&tweets, cli.no_db);
+            archive(&client, &tweets, cli.no_db).await;
             Ok(())
         }
         Command::Tweet {
@@ -542,14 +543,14 @@ async fn run() -> Result<()> {
             let id = extract::extract_tweet_id(&tweet);
             let tweets = client.get_replies(&id).await?;
             output::print_tweets(&tweets, cli.json, cli.plain, "No replies found.");
-            archive(&tweets, cli.no_db);
+            archive(&client, &tweets, cli.no_db).await;
             Ok(())
         }
         Command::Thread { tweet } => {
             let id = extract::extract_tweet_id(&tweet);
             let tweets = client.get_thread(&id).await?;
             output::print_tweets(&tweets, cli.json, cli.plain, "No thread tweets found.");
-            archive(&tweets, cli.no_db);
+            archive(&client, &tweets, cli.no_db).await;
             Ok(())
         }
         Command::User { handle } => {
@@ -564,13 +565,13 @@ async fn run() -> Result<()> {
             };
             let tweets = client.user_tweets(&handle, count).await?;
             output::print_tweets(&tweets, cli.json, cli.plain, "No tweets found.");
-            archive(&tweets, cli.no_db);
+            archive(&client, &tweets, cli.no_db).await;
             Ok(())
         }
         Command::Home { count } => {
             let tweets = client.home(count).await?;
             output::print_tweets(&tweets, cli.json, cli.plain, "No home tweets found.");
-            archive(&tweets, cli.no_db);
+            archive(&client, &tweets, cli.no_db).await;
             Ok(())
         }
         Command::Bookmarks { count, all } => {
@@ -594,6 +595,7 @@ async fn run() -> Result<()> {
             // The collection records everything you ever bookmarked: unbookmark
             // something in X and the archive keeps it.
             db.archive_collection(&fetched, &user.id, "bookmarks")?;
+            media::save(client.http(), &fetched).await;
             // Show the newest from the archive, so a caught-up sync that fetched
             // nothing new still displays your recent bookmarks.
             let newest = db.collection("bookmarks", count)?;
@@ -603,7 +605,7 @@ async fn run() -> Result<()> {
         Command::List { list, count } => {
             let tweets = client.list_tweets(&list, count).await?;
             output::print_tweets(&tweets, cli.json, cli.plain, "No list tweets found.");
-            archive(&tweets, cli.no_db);
+            archive(&client, &tweets, cli.no_db).await;
             Ok(())
         }
         Command::Delete { tweet, dry_run } => {
@@ -774,14 +776,16 @@ async fn upload_all(
 
 /// Persist fetched tweets to the local archive. Best-effort: a DB failure warns
 /// but never fails the command or suppresses the output already printed.
-fn archive(tweets: &[models::Tweet], no_db: bool) {
+async fn archive(client: &TwitterClient, tweets: &[models::Tweet], no_db: bool) {
     if no_db || tweets.is_empty() {
         return;
     }
     let result = db::Db::open_default().and_then(|mut db| db.archive(tweets));
     if let Err(e) = result {
         eprintln!("⚠️ archive skipped: {e}");
+        return;
     }
+    media::save(client.http(), tweets).await;
 }
 
 async fn whoami(client: &TwitterClient, source: &str, json: bool, plain: bool) -> Result<()> {
