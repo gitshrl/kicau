@@ -76,8 +76,7 @@ kicau mania # a cat dancing in ASCII
 
 **Read**
 `read` · `search` · `mentions` · `replies` · `thread` · `user` · `tweets` ·
-`home` · `bookmarks` · `folders` (bookmark folders and what is in them) ·
-`list` · `dms` · `dm`
+`home` · `bookmarks` · `list` · `dms` · `dm`
 
 **Write**
 `tweet` · `reply` · `delete` · `like`/`unlike` · `retweet`/`unretweet` ·
@@ -90,9 +89,7 @@ kicau mania # a cat dancing in ASCII
 
 **Setup / maintenance**
 `init` (create config, prompt for cookies) · `config` (show paths and
-credential source) · `whoami` · `check` · `update-query-ids` (re-scrape
-x.com for current GraphQL query ids — run this when calls start failing
-after X ships a change) · `mcp` (serve the archive to agents)
+credential source) · `whoami` · `check` · `mcp` (serve the archive to agents)
 
 **Fun**
 `mania`
@@ -112,8 +109,9 @@ kicau graph followers kognosia -n 50 --json
 One call returns a single page (~50 accounts) and does not expose a cursor,
 so `-n 500` will not page through a large graph — it caps out at what one
 request returns. For a complete list, paginate against the X GraphQL endpoint
-directly using the query id from `~/.kicau/config.toml` and the bottom cursor
-from each response.
+directly, using the `Following` / `Followers` query id from `QUERY_IDS` in
+`src/config.rs` and the bottom cursor from each response. Pin a different id
+under `[query_ids]` in `~/.kicau/config.toml` if X ships a change.
 
 ### Global flags
 
