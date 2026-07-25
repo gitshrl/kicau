@@ -96,23 +96,6 @@ credential source) · `whoami` · `check` · `mcp` (serve the archive to agents)
 
 Run `kicau <command> --help` for options. Every write supports `--dry-run`.
 
-### Follow graph
-
-`graph` snapshots who a handle follows, or who follows them, into the local
-store:
-
-```sh
-kicau graph following kognosia
-kicau graph followers kognosia -n 50 --json
-```
-
-One call returns a single page (~50 accounts) and does not expose a cursor,
-so `-n 500` will not page through a large graph — it caps out at what one
-request returns. For a complete list, paginate against the X GraphQL endpoint
-directly, using the `Following` / `Followers` query id from `QUERY_IDS` in
-`src/config.rs` and the bottom cursor from each response. Pin a different id
-under `[query_ids]` in `~/.kicau/config.toml` if X ships a change.
-
 ### Global flags
 
 | Flag | Effect |
