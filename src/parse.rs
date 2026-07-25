@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-use crate::models::{Author, DmConversation, DmMessage, Profile, Tweet};
+use crate::models::{Author, DmConversation, DmMessage, Media, Profile, Tweet};
 
 /// The `account.js` from an X data export → the archive owner as an Author.
 /// Files are JS-wrapped (`window.YTD.account.part0 = [...]`); the JSON array
@@ -37,6 +37,7 @@ pub fn parse_archive_tweets(js: &str, author: &Author) -> Vec<Tweet> {
             like_count: str_at(t, "/favorite_count").and_then(|s| s.parse().ok()),
             conversation_id: None,
             in_reply_to_status_id: str_at(t, "/in_reply_to_status_id_str"),
+            media: Vec::new(),
         });
     }
     tweets
@@ -207,7 +208,53 @@ pub fn map_tweet_result(result: &Value) -> Option<Tweet> {
         like_count: legacy["favorite_count"].as_u64(),
         conversation_id: str_at(legacy, "/conversation_id_str"),
         in_reply_to_status_id: str_at(legacy, "/in_reply_to_status_id_str"),
+        media: media_from_result(result),
     })
+}
+
+/// The images attached to a tweet: post photos and video/GIF posters from
+/// `extended_entities`, plus an article's cover. Photos are upgraded to the
+/// original resolution; a video or GIF contributes only its poster image.
+fn media_from_result(result: &Value) -> Vec<Media> {
+    let mut media = Vec::new();
+    for item in as_array(
+        result
+            .pointer("/legacy/extended_entities/media")
+            .unwrap_or(&Value::Null),
+    ) {
+        let Some(url) = str_at(item, "/media_url_https") else {
+            continue;
+        };
+        let kind = str_at(item, "/type").unwrap_or_default();
+        let url = if kind == "photo" { full_res(&url) } else { url };
+        media.push(Media {
+            kind,
+            url,
+            alt: str_at(item, "/ext_alt_text"),
+        });
+    }
+    if let Some(url) = str_at(
+        result,
+        "/article/article_results/result/cover_media/media_info/original_img_url",
+    ) {
+        media.push(Media {
+            kind: "cover".to_string(),
+            url,
+            alt: None,
+        });
+    }
+    media
+}
+
+/// The original-resolution form of a `pbs.twimg.com/media` photo URL. X serves a
+/// downscaled default; `name=orig` asks for the full image. Other hosts (video
+/// thumbnails, article covers) are already the size they are.
+fn full_res(url: &str) -> String {
+    if url.contains("pbs.twimg.com/media") {
+        format!("{url}?name=orig")
+    } else {
+        url.to_string()
+    }
 }
 
 /// Walk timeline `instructions` collecting user profiles from `user_results`
@@ -655,5 +702,63 @@ mod tests {
             tweet.text,
             "Getting started with loops\n\nThere's a lot of talk about designing loops."
         );
+    }
+
+    #[test]
+    fn extracts_post_media_at_full_resolution() {
+        let result = json!({
+            "rest_id": "7",
+            "legacy": {
+                "full_text": "look",
+                "extended_entities": { "media": [
+                    { "type": "photo",
+                      "media_url_https": "https://pbs.twimg.com/media/AAA.jpg",
+                      "ext_alt_text": "a cat" },
+                    { "type": "video",
+                      "media_url_https": "https://pbs.twimg.com/tweet_video_thumb/BBB.jpg" }
+                ] }
+            },
+            "core": { "user_results": { "result": {
+                "legacy": { "screen_name": "claude", "name": "Claude" }
+            } } }
+        });
+        let tweet = map_tweet_result(&result).unwrap();
+        assert_eq!(tweet.media.len(), 2);
+        // A photo is upgraded to the original resolution and keeps its alt text.
+        assert_eq!(tweet.media[0].kind, "photo");
+        assert_eq!(
+            tweet.media[0].url,
+            "https://pbs.twimg.com/media/AAA.jpg?name=orig"
+        );
+        assert_eq!(tweet.media[0].alt.as_deref(), Some("a cat"));
+        // A video contributes its poster image as-is, no name=orig, no alt.
+        assert_eq!(tweet.media[1].kind, "video");
+        assert_eq!(
+            tweet.media[1].url,
+            "https://pbs.twimg.com/tweet_video_thumb/BBB.jpg"
+        );
+        assert_eq!(tweet.media[1].alt, None);
+    }
+
+    #[test]
+    fn extracts_article_cover_image() {
+        let result = json!({
+            "rest_id": "8",
+            "legacy": { "full_text": "https://t.co/stub" },
+            "article": { "article_results": { "result": {
+                "title": "Piece",
+                "plain_text": "the body",
+                "cover_media": { "media_info": {
+                    "original_img_url": "https://pbs.twimg.com/media/COVER.jpg"
+                } }
+            } } },
+            "core": { "user_results": { "result": {
+                "legacy": { "screen_name": "claude", "name": "Claude" }
+            } } }
+        });
+        let tweet = map_tweet_result(&result).unwrap();
+        assert_eq!(tweet.media.len(), 1);
+        assert_eq!(tweet.media[0].kind, "cover");
+        assert_eq!(tweet.media[0].url, "https://pbs.twimg.com/media/COVER.jpg");
     }
 }

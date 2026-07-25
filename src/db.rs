@@ -482,6 +482,7 @@ fn row_to_tweet(row: &rusqlite::Row) -> rusqlite::Result<Tweet> {
         retweet_count: None,
         reply_count: None,
         conversation_id: None,
+        media: Vec::new(),
     })
 }
 
@@ -566,6 +567,7 @@ mod tests {
             like_count: Some(3),
             conversation_id: Some(id.into()),
             in_reply_to_status_id: None,
+            media: Vec::new(),
         }
     }
 

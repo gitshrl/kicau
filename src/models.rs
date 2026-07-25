@@ -1,10 +1,21 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Author {
     pub id: String,
     pub username: String,
     pub name: String,
+}
+
+/// One image attached to a tweet: a post photo, a video/GIF poster, or an
+/// article cover. `url` is the image to download; `kind` is the raw X media
+/// type (`photo`, `video`, `animated_gif`) or `cover` for an article cover.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Media {
+    pub kind: String,
+    pub url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alt: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -58,6 +69,8 @@ pub struct Tweet {
     pub conversation_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub in_reply_to_status_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub media: Vec<Media>,
 }
 
 #[cfg(test)]
@@ -79,6 +92,7 @@ mod tests {
             like_count: Some(1),
             conversation_id: None,
             in_reply_to_status_id: None,
+            media: Vec::new(),
         }
     }
 

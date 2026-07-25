@@ -1352,6 +1352,7 @@ mod tests {
             like_count: None,
             conversation_id: None,
             in_reply_to_status_id: None,
+            media: Vec::new(),
         }
     }
 
