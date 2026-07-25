@@ -108,7 +108,7 @@ const BACKUP_TABLES: &[&str] = &[
 
 const SELECT: &str = "
 SELECT t.id, t.text, t.created_at, t.reply_to_id, t.like_count,
-       p.id, p.handle, p.display_name
+       p.id, p.handle, p.display_name, t.media_json
 FROM tweets t JOIN profiles p ON p.id = t.author_profile_id";
 
 pub struct Db {
@@ -440,10 +440,11 @@ fn upsert_tweet(tx: &rusqlite::Transaction, tweet: &Tweet, now: &str) -> rusqlit
         ],
     )?;
     tx.execute(
-        "INSERT INTO tweets(id, author_profile_id, text, created_at, reply_to_id, like_count)
-         VALUES(?1, ?2, ?3, ?4, ?5, ?6)
+        "INSERT INTO tweets(id, author_profile_id, text, created_at, reply_to_id, like_count, media_json, media_count)
+         VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
          ON CONFLICT(id) DO UPDATE SET text=excluded.text, created_at=excluded.created_at,
-             reply_to_id=excluded.reply_to_id, like_count=excluded.like_count",
+             reply_to_id=excluded.reply_to_id, like_count=excluded.like_count,
+             media_json=excluded.media_json, media_count=excluded.media_count",
         params![
             tweet.id,
             tweet.author.id,
@@ -451,6 +452,8 @@ fn upsert_tweet(tx: &rusqlite::Transaction, tweet: &Tweet, now: &str) -> rusqlit
             tweet.created_at.as_deref().unwrap_or_default(),
             tweet.in_reply_to_status_id,
             tweet.like_count.unwrap_or(0),
+            serde_json::to_string(&tweet.media).unwrap_or_else(|_| "[]".to_string()),
+            i64::try_from(tweet.media.len()).unwrap_or(0),
         ],
     )?;
     tx.execute(
@@ -482,7 +485,11 @@ fn row_to_tweet(row: &rusqlite::Row) -> rusqlite::Result<Tweet> {
         retweet_count: None,
         reply_count: None,
         conversation_id: None,
-        media: Vec::new(),
+        media: row
+            .get::<_, String>(8)
+            .ok()
+            .and_then(|j| serde_json::from_str(&j).ok())
+            .unwrap_or_default(),
     })
 }
 
@@ -550,6 +557,7 @@ fn fts_match(query: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::Media;
 
     // created_at is ISO 8601 here because the parser normalizes it before archiving.
     fn tweet(id: &str, uid: &str, handle: &str, text: &str, iso_date: &str) -> Tweet {
@@ -643,6 +651,38 @@ mod tests {
             0,
             "fts reindexed on update"
         );
+    }
+
+    #[test]
+    fn archiving_records_and_reads_back_media() {
+        let mut db = db();
+        let mut t = tweet("1", "u", "h", "hi", "2026-07-06T10:00:00.000Z");
+        t.media = vec![
+            Media {
+                kind: "photo".into(),
+                url: "https://pbs.twimg.com/media/A.jpg?name=orig".into(),
+                alt: Some("a cat".into()),
+            },
+            Media {
+                kind: "cover".into(),
+                url: "https://pbs.twimg.com/media/C.jpg".into(),
+                alt: None,
+            },
+        ];
+        db.archive(std::slice::from_ref(&t)).unwrap();
+
+        // media survives a write/read round-trip through the media_json column
+        let back = db.recent(10).unwrap();
+        assert_eq!(back[0].media, t.media);
+
+        // media_count is denormalized beside it
+        let count: i64 = db
+            .conn
+            .query_row("SELECT media_count FROM tweets WHERE id = '1'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 2);
     }
 
     #[test]
