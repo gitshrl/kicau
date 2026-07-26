@@ -28,7 +28,7 @@ The MCP surface reads and fetches. It never writes to X.
 - **One network tool**, `read_tweet`, fetches a single post live and archives
   it, exactly as `kicau read` does. It is available by default; its only
   requirement is resolved credentials, and without them it returns a result
-  telling the model to run `kicau init` rather than failing the request.
+  telling the model to run `kicau login` rather than failing the request.
 - **No write tools.** Nothing in the surface posts, likes, follows, retweets,
   bookmarks, or deletes. This is the boundary the ADR exists to defend: a future
   contributor adding a `post_tweet` tool should meet this decision first.

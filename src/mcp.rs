@@ -172,7 +172,7 @@ async fn run(name: &str, args: &Value, client: Option<&TwitterClient>) -> Result
         "read_tweet" => {
             let Some(client) = client else {
                 return Ok(tool_failure(
-                    "read_tweet needs X credentials; the other tools read the local archive. Run kicau init.",
+                    "read_tweet needs X credentials; the other tools read the local archive. Run kicau login.",
                 ));
             };
             let id = extract::extract_tweet_id(&text_arg("tweet"));
@@ -384,7 +384,7 @@ mod tests {
             out["content"][0]["text"]
                 .as_str()
                 .unwrap()
-                .contains("kicau init")
+                .contains("kicau login")
         );
     }
 

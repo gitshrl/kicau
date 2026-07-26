@@ -107,7 +107,7 @@ fn read_tweet_without_credentials_refuses_as_a_result_not_a_crash() {
         responses[0]["result"]["content"][0]["text"]
             .as_str()
             .unwrap()
-            .contains("kicau init")
+            .contains("kicau login")
     );
 }
 
