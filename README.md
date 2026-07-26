@@ -16,7 +16,7 @@ offline.
 ## Install
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/gitshrl/kicau/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/gitshrl/kicau/main/scripts/install.sh | sh
 ```
 
 Linux x86_64 and macOS on Apple silicon. No Rust, no build, no dependencies.
@@ -139,3 +139,7 @@ only tool that calls X, using your cookies; without them it says to run
 `kicau login` rather than failing. The surface reads and fetches only: it never
 posts, likes, follows, or deletes, so an agent can read your feed but cannot act
 as you.
+
+`install.sh` also drops a `kicau` skill into any agent framework you already have
+(`~/.claude`, `~/.agents`, `~/.openclaw`, `~/.hermes`), so the assistant knows
+kicau's commands and MCP tools. Frameworks you do not have are skipped.
