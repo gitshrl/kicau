@@ -2,6 +2,7 @@ mod client;
 mod config;
 mod db;
 mod extract;
+mod login;
 mod mcp;
 mod media;
 mod models;
@@ -47,8 +48,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Create config directories and seed defaults
-    Init,
+    /// Log in: read the X cookies from a browser session, or paste them manually
+    Login,
     /// Show configuration paths and where credentials resolve from
     Config,
     /// Show which account the current credentials belong to
@@ -314,7 +315,7 @@ async fn run() -> Result<()> {
     }
     // These commands need no credentials.
     match &cli.command {
-        Command::Init => return init_command(),
+        Command::Login => return login_command(cli.timeout).await,
         Command::Config => {
             config_command(cli.json);
             return Ok(());
@@ -405,7 +406,7 @@ async fn run() -> Result<()> {
 
     match cli.command {
         Command::Check
-        | Command::Init
+        | Command::Login
         | Command::Config
         | Command::Mania
         | Command::Mcp
@@ -944,28 +945,34 @@ fn check_cookie(label: &str, value: &str) -> Result<()> {
 
 /// Create `~/.kicau` and drop a `config.toml`. Idempotent — never overwrites an
 /// existing config.
-fn init_command() -> Result<()> {
+/// Log in by borrowing an installed browser's X session, falling back to a
+/// manual cookie paste. Writes the resolved cookies to the config, same file and
+/// mode as before; re-runnable to refresh an expired session.
+async fn login_command(timeout: u64) -> Result<()> {
     use std::io::IsTerminal;
 
     let state = config::state_dir();
     std::fs::create_dir_all(&state)?;
     let config_file = config::config_toml_path();
+    let interactive = std::io::stdin().is_terminal();
 
     if config_file.exists() {
-        println!("✅ kicau initialized");
-        println!("   state:  {}", state.display());
-        println!("   config: {} (already present)", config_file.display());
-        return Ok(());
+        if !interactive {
+            // A scripted re-run leaves a working config alone rather than
+            // clobbering it with a blank template.
+            println!("✅ kicau already configured: {}", config_file.display());
+            return Ok(());
+        }
+        if !confirm(&format!(
+            "{} already exists. Overwrite it?",
+            config_file.display()
+        ))? {
+            println!("Left the existing config in place.");
+            return Ok(());
+        }
     }
 
-    // Only ask when someone is there to answer; piped or scripted runs get the
-    // blank template instead of a hung prompt.
-    let (auth_token, ct0) = if std::io::stdin().is_terminal() {
-        print_cookie_guidance();
-        prompt_credentials()?
-    } else {
-        (String::new(), String::new())
-    };
+    let (auth_token, ct0) = obtain_credentials(interactive, timeout).await?;
     check_cookie("auth_token", &auth_token)?;
     check_cookie("ct0", &ct0)?;
 
@@ -976,15 +983,113 @@ fn init_command() -> Result<()> {
         let _ = std::fs::set_permissions(&config_file, std::fs::Permissions::from_mode(0o600));
     }
 
-    println!("✅ kicau initialized");
     println!("   state:  {}", state.display());
     println!("   config: {}", config_file.display());
     if auth_token.is_empty() || ct0.is_empty() {
         println!("\nAdd auth_token and ct0 to that file, then run: kicau whoami");
     } else {
-        println!("\nRun kicau whoami to check the cookies work.");
+        println!("✅ logged in — run kicau whoami to confirm.");
     }
     Ok(())
+}
+
+/// The cookies to save: a browser session if one is found and accepted,
+/// otherwise the manual prompt (or a blank template when nobody is at the
+/// terminal to answer).
+async fn obtain_credentials(interactive: bool, timeout: u64) -> Result<(String, String)> {
+    // Browser login needs a graphical session; a headless box has no browser to
+    // read, so skip the scan and go straight to the manual paste.
+    if login::is_headless() {
+        if interactive {
+            println!("No graphical session here — browser login needs a desktop.");
+            println!("Paste your cookies below, or run kicau login on your desktop.");
+        }
+    } else {
+        let sessions = login::scan_sessions().await;
+        if let Some(pair) = choose_session(sessions, interactive, timeout).await {
+            return Ok(pair);
+        }
+    }
+    if interactive {
+        print_cookie_guidance();
+        prompt_credentials()
+    } else {
+        Ok((String::new(), String::new()))
+    }
+}
+
+/// Pick a browser session and confirm it logs in. Returns the cookies to save,
+/// or None to fall back to the manual prompt. A piped run auto-takes a single
+/// unambiguous session and never prompts.
+async fn choose_session(
+    mut sessions: Vec<login::BrowserSession>,
+    interactive: bool,
+    timeout: u64,
+) -> Option<(String, String)> {
+    if sessions.is_empty() {
+        return None;
+    }
+    if !interactive {
+        return (sessions.len() == 1).then(|| {
+            let session = sessions.remove(0);
+            (session.auth_token, session.ct0)
+        });
+    }
+
+    let chosen = if sessions.len() == 1 {
+        sessions.remove(0)
+    } else {
+        println!("Found an X session in more than one browser:");
+        for (i, session) in sessions.iter().enumerate() {
+            println!("  {}) {}", i + 1, session.label());
+        }
+        sessions.remove(prompt_choice(sessions.len())?)
+    };
+
+    match verify_session(&chosen, timeout).await {
+        Ok(handle) => confirm(&format!(
+            "Use the session in {} — logged in as @{handle}?",
+            chosen.label()
+        ))
+        .ok()?
+        .then_some((chosen.auth_token, chosen.ct0)),
+        Err(e) => {
+            eprintln!("⚠️  {} session did not verify: {e}", chosen.label());
+            None
+        }
+    }
+}
+
+/// Confirm a candidate session works and return the account it belongs to.
+async fn verify_session(session: &login::BrowserSession, timeout: u64) -> Result<String> {
+    let client = TwitterClient::new(
+        session.auth_token.clone(),
+        session.ct0.clone(),
+        Duration::from_millis(timeout),
+    )?;
+    Ok(client.current_user().await?.username)
+}
+
+/// A yes/no question on the terminal; anything but yes is No.
+fn confirm(question: &str) -> Result<bool> {
+    use std::io::Write;
+    print!("{question} [y/N] ");
+    std::io::stdout().flush()?;
+    let mut line = String::new();
+    std::io::stdin().read_line(&mut line)?;
+    Ok(matches!(line.trim().to_lowercase().as_str(), "y" | "yes"))
+}
+
+/// A 1-based menu choice; None on empty or out-of-range input, which falls the
+/// caller back to the manual paste.
+fn prompt_choice(count: usize) -> Option<usize> {
+    use std::io::Write;
+    print!("Pick one (1-{count}, or Enter to paste manually): ");
+    std::io::stdout().flush().ok()?;
+    let mut line = String::new();
+    std::io::stdin().read_line(&mut line).ok()?;
+    let choice: usize = line.trim().parse().ok()?;
+    (1..=count).contains(&choice).then_some(choice - 1)
 }
 
 /// Dancing cat. That is the whole feature.

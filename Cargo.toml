@@ -1,6 +1,6 @@
 [package]
 name = "kicau"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 rust-version = "1.96"
 description = "Single-binary CLI for X (Twitter). Your session cookies, local SQLite archive."
@@ -22,9 +22,10 @@ toml = "0.8"
 regex = "1"
 anyhow = "1"
 thiserror = "2"
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.31", features = ["bundled"] }
 sha2 = "0.10"
 base64 = "0.22"
+cookie-scoop = "0.1.1"
 
 [profile.release]
 strip = true

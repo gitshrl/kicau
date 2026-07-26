@@ -23,9 +23,11 @@ Linux x86_64 and macOS on Apple silicon. No Rust, no build, no dependencies.
 
 ## Authentication
 
-Run `kicau init` once. It explains where to find your two x.com session cookies,
-prompts for them, and writes `~/.kicau/config.toml`. Skip the prompts with Enter
-to fill the file in by hand. `kicau config` shows where everything lives.
+Run `kicau login` once. It reads your X session straight from a browser you are
+signed into (Chrome, Edge, Firefox, or Safari), verifies it, and writes
+`~/.kicau/config.toml` — no copy-paste. With no browser session it falls back to
+prompting for the two cookies by hand. Re-run it any time to refresh an expired
+session. `kicau config` shows where everything lives.
 
 ```toml
 # ~/.kicau/config.toml
@@ -46,7 +48,7 @@ Check what resolved with `kicau check`.
 
 ```sh
 # setup
-kicau init # create the config and ask for your cookies
+kicau login # read your X session from the browser (or paste cookies)
 kicau whoami # confirm which account the cookies belong to
 
 # read from X
@@ -134,6 +136,6 @@ It exposes five tools:
 
 The first four read the local archive and touch no network. `read_tweet` is the
 only tool that calls X, using your cookies; without them it says to run
-`kicau init` rather than failing. The surface reads and fetches only: it never
+`kicau login` rather than failing. The surface reads and fetches only: it never
 posts, likes, follows, or deletes, so an agent can read your feed but cannot act
 as you.
