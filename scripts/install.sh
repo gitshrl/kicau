@@ -1,6 +1,6 @@
 #!/bin/sh
 # Install kicau. Usage:
-#   curl -fsSL https://raw.githubusercontent.com/gitshrl/kicau/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/gitshrl/kicau/main/scripts/install.sh | sh
 #
 # Override the install directory with KICAU_BIN_DIR, and the version with
 # KICAU_VERSION (defaults to the latest release).
@@ -71,5 +71,22 @@ case ":$PATH:" in
 	*":$BIN_DIR:"*) ;;
 	*) echo "kicau: note that $BIN_DIR is not on your PATH" ;;
 esac
+
+# Teach any agent framework you already use how to drive kicau. The skill lives
+# in the repo, not the release, so a doc update ships without a new binary build.
+# Only frameworks present under $HOME get it; missing ones are skipped, not made.
+skill_url="https://raw.githubusercontent.com/$REPO/main/skills/kicau/SKILL.md"
+if curl -fsSL "$skill_url" -o "$tmp/SKILL.md" 2>/dev/null; then
+	installed_skill=""
+	for fw in .agents .claude .openclaw .hermes; do
+		[ -d "$HOME/$fw" ] || continue
+		dest="$HOME/$fw/skills/kicau"
+		if mkdir -p "$dest" 2>/dev/null && cp "$tmp/SKILL.md" "$dest/SKILL.md" 2>/dev/null; then
+			installed_skill="$installed_skill $fw"
+		fi
+	done
+	[ -n "$installed_skill" ] && echo "kicau: installed the kicau skill to$installed_skill"
+fi
+
 echo
-echo "Next: kicau init"
+echo "Next: kicau login"
