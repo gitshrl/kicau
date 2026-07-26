@@ -404,6 +404,7 @@ mod tests {
             like_count: None,
             conversation_id: None,
             in_reply_to_status_id: None,
+            media: Vec::new(),
         };
         let out = render(std::slice::from_ref(&tweet), "empty");
         assert!(out.contains("https://x.com/dankoe/status/9"));
