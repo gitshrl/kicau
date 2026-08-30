@@ -127,6 +127,20 @@ impl Db {
     }
 
     fn init(conn: Connection) -> Result<Db> {
+        // Several kicau commands (home, bookmarks, tweets) run concurrently from
+        // cron. SQLite's default `delete` journal takes a database-wide write lock,
+        // so a long `home -n 500` archive starves every other process and they die
+        // with "database is locked". WAL lets readers and writers proceed together;
+        // the longer busy_timeout absorbs the remaining writer-vs-writer overlap.
+        //
+        // journal_mode persists in the database file; busy_timeout is per-connection
+        // and must be set on every open. In-memory databases (tests) ignore WAL and
+        // report "memory", which is fine — hence query_row, not execute.
+        let _: String = conn
+            .query_row("PRAGMA journal_mode = WAL", [], |r| r.get(0))
+            .unwrap_or_else(|_| "unknown".to_string());
+        conn.busy_timeout(std::time::Duration::from_secs(30))?;
+
         // profile_snapshots switched from a time key to a content-hash key; drop
         // the old regenerable table so the new schema takes effect.
         let old_snapshots: bool = conn
